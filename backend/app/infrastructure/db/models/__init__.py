@@ -26,6 +26,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import CITEXT, ENUM, INET, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -57,7 +58,14 @@ Rate = Numeric(20, 8)
 
 
 def _pk() -> Mapped[uuid.UUID]:
-    return mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # server_default matches db/schema.sql (gen_random_uuid()) so raw SQL inserts
+    # also get a PK; the Python-side default keeps ORM round-trips populated.
+    return mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
 
 
 def _ts_created() -> Mapped[datetime]:
