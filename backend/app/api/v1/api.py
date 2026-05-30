@@ -17,6 +17,7 @@ from app.api.v1.routers import (
     health,
     imports,
     portfolios,
+    reports,
     tax,
     transactions,
 )
@@ -31,3 +32,4 @@ api_router.include_router(ai.router)
 api_router.include_router(dividends.router)
 api_router.include_router(fire.router)
 api_router.include_router(tax.router)
+api_router.include_router(reports.router)
