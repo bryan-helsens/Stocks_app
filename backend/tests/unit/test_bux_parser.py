@@ -11,10 +11,9 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-
+from app.domain.value_objects.enums import TransactionType
 from app.infrastructure.brokers import select_parser
 from app.infrastructure.brokers.bux import BuxParser
-from app.domain.value_objects.enums import TransactionType
 
 SAMPLE = Path(__file__).resolve().parents[3] / "docs" / "samples" / "bux_sample.csv"
 

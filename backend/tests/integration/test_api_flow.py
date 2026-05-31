@@ -115,9 +115,9 @@ async def test_duplicate_transaction_is_rejected(app_client):
 
 async def _ensure_asset(app_client) -> str:
     """Insert a shared asset directly via the DB session factory."""
-    from app.infrastructure.db.base import get_session_factory
-    from app.infrastructure.db import models
     from app.domain.value_objects.enums import AssetClass
+    from app.infrastructure.db import models
+    from app.infrastructure.db.base import get_session_factory
     from sqlalchemy import select
 
     factory = get_session_factory()

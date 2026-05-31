@@ -54,7 +54,16 @@ async def upload_import(
     preview = await svc.create_batch(
         user.id, portfolio_id, file.filename or "upload", content, parser_key
     )
-    return ImportPreviewResponse(**preview.__dict__)
+    return ImportPreviewResponse(
+        batch_id=preview.batch_id,
+        status=preview.status,
+        row_count=preview.row_count,
+        new_count=preview.new_count,
+        dup_count=preview.dup_count,
+        invalid_count=preview.invalid_count,
+        column_mapping=preview.column_mapping,
+        rows=preview.rows,
+    )
 
 
 @router.post("/{batch_id}/commit", response_model=ImportCommitResponse)

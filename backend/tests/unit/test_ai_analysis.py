@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from app.application.services.ai_analysis import AIAnalysisService
 from app.domain.ports.llm import LLMMessage, LLMResponse
 

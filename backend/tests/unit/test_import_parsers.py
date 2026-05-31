@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from app.domain.value_objects.enums import TransactionType
 from app.infrastructure.brokers import select_parser
 from app.infrastructure.brokers.classification import classify
 from app.infrastructure.brokers.column_detection import detect_mapping
 from app.infrastructure.brokers.csv_generic import CsvGenericParser
-from app.domain.value_objects.enums import TransactionType
 
 
 def test_detect_mapping_multilang():

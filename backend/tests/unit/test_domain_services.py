@@ -12,7 +12,6 @@ from decimal import Decimal
 from uuid import uuid4
 
 import pytest
-
 from app.domain.entities import Fundamentals, Transaction
 from app.domain.services import dividends, fire, pnl, risk, scenarios, scoring, tax_be, valuation
 from app.domain.services.pnl import InsufficientSharesError
