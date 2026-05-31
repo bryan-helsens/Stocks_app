@@ -3,7 +3,6 @@ name = "divtrack-backend"
 version = "0.1.0"
 description = "DivTrack — portfolio, dividend, FIRE & tax (BE) management API. Educational/informational only — no financial, tax or legal advice."
 requires-python = ">=3.12"
-readme = "../README.md"
 
 dependencies = [
     # Web / ASGI
@@ -81,5 +80,7 @@ addopts = "-q --cov=app --cov-report=term-missing"
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["app"]
+# Auto-discover the `app` package and all its sub-packages (app.core, app.domain, …)
+# so the built wheel is complete.
+[tool.setuptools.packages.find]
+include = ["app*"]
