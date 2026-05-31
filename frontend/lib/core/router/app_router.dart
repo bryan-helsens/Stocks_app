@@ -11,6 +11,7 @@ import '../../features/fire/presentation/fire_page.dart';
 import '../../features/import/presentation/import_page.dart';
 import '../../features/portfolio/presentation/portfolio_page.dart';
 import '../../features/tax/presentation/tax_page.dart';
+import '../../features/watchlist/presentation/watchlist_page.dart';
 import '../widgets/app_shell.dart';
 
 /// App routing with an auth guard. Unauthenticated users are redirected to
@@ -40,6 +41,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: '/dividends', builder: (_, __) => const DividendsPage()),
           GoRoute(path: '/fire', builder: (_, __) => const FirePage()),
           GoRoute(path: '/ai', builder: (_, __) => const AiPage()),
+          GoRoute(path: '/watchlist', builder: (_, __) => const WatchlistPage()),
           GoRoute(path: '/tax', builder: (_, __) => const TaxPage()),
         ],
       ),

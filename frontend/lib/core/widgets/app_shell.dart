@@ -20,6 +20,7 @@ class AppShell extends ConsumerWidget {
     _Dest('/dividends', Icons.euro_outlined, Icons.euro, 'Dividend'),
     _Dest('/fire', Icons.local_fire_department_outlined, Icons.local_fire_department, 'FIRE'),
     _Dest('/ai', Icons.auto_awesome_outlined, Icons.auto_awesome, 'AI'),
+    _Dest('/watchlist', Icons.visibility_outlined, Icons.visibility, 'Watchlist'),
     _Dest('/tax', Icons.receipt_long_outlined, Icons.receipt_long, 'Belasting'),
   ];
 
