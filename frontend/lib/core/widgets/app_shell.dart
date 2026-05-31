@@ -18,6 +18,7 @@ class AppShell extends ConsumerWidget {
     _Dest('/portfolio', Icons.work_outline, Icons.work, 'Portfolio'),
     _Dest('/import', Icons.upload_file_outlined, Icons.upload_file, 'Import'),
     _Dest('/dividends', Icons.euro_outlined, Icons.euro, 'Dividend'),
+    _Dest('/calendar', Icons.calendar_month_outlined, Icons.calendar_month, 'Kalender'),
     _Dest('/fire', Icons.local_fire_department_outlined, Icons.local_fire_department, 'FIRE'),
     _Dest('/ai', Icons.auto_awesome_outlined, Icons.auto_awesome, 'AI'),
     _Dest('/watchlist', Icons.visibility_outlined, Icons.visibility, 'Watchlist'),

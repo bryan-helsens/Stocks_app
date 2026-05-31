@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -17,4 +19,20 @@ class DividendDashboardResponse(BaseModel):
     avg_monthly: Decimal
     projected_next_12m: Decimal
     currency: str
+    note: str
+
+
+class CalendarEventResponse(BaseModel):
+    date: date
+    kind: str
+    event_type: str
+    ticker: str
+    name: str
+    amount: Decimal | None
+    currency: str
+    portfolio_id: UUID | None = None
+
+
+class DividendCalendarResponse(BaseModel):
+    events: list[CalendarEventResponse]
     note: str

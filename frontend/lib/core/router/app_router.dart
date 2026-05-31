@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../features/ai/presentation/ai_page.dart';
 import '../../features/auth/presentation/auth_controller.dart';
 import '../../features/auth/presentation/login_page.dart';
+import '../../features/calendar/presentation/calendar_page.dart';
 import '../../features/dashboard/presentation/dashboard_page.dart';
 import '../../features/dividends/presentation/dividends_page.dart';
 import '../../features/fire/presentation/fire_page.dart';
@@ -39,6 +40,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: '/portfolio', builder: (_, __) => const PortfolioPage()),
           GoRoute(path: '/import', builder: (_, __) => const ImportPage()),
           GoRoute(path: '/dividends', builder: (_, __) => const DividendsPage()),
+          GoRoute(path: '/calendar', builder: (_, __) => const CalendarPage()),
           GoRoute(path: '/fire', builder: (_, __) => const FirePage()),
           GoRoute(path: '/ai', builder: (_, __) => const AiPage()),
           GoRoute(path: '/watchlist', builder: (_, __) => const WatchlistPage()),
