@@ -1,0 +1,23 @@
+# Normalise line endings so shell scripts always use LF, even when cloned on
+# Windows / WSL with core.autocrlf=true. CRLF in entrypoint.sh breaks the
+# shebang inside the container (env: 'sh\r': No such file or directory).
+
+# Default: let git handle text normalisation.
+* text=auto
+
+# Shell scripts MUST be LF.
+*.sh text eol=lf
+backend/entrypoint.sh text eol=lf
+
+# Other text formats that should stay LF in containers.
+Dockerfile text eol=lf
+Makefile text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Binary-ish files: never touch.
+*.png binary
+*.jpg binary
+*.pdf binary
+*.xlsx binary

@@ -42,7 +42,11 @@ COPY backend/ /app/
 # The initial migration reads the canonical DDL from /app/db/schema.sql.
 COPY db/ /app/db/
 
-RUN mkdir -p /data/divtrack && chown -R appuser:appuser /app /data/divtrack
+# Normalise the entrypoint's line endings (defensive: a CRLF checkout on
+# Windows/WSL would otherwise break the shebang -> "env: 'sh\r'") and make it
+# executable.
+RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh \
+    && mkdir -p /data/divtrack && chown -R appuser:appuser /app /data/divtrack
 USER appuser
 
 EXPOSE 8000
