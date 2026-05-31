@@ -16,8 +16,8 @@ from sqlalchemy import select
 from app.core.logging import get_logger
 from app.domain.ports.notifier import NotificationMessage
 from app.domain.value_objects.enums import AlertType, NotificationStatus
-from app.infrastructure.db.base import get_session_factory
 from app.infrastructure.db import models
+from app.infrastructure.db.base import get_session_factory
 from app.infrastructure.notifications import get_notifier
 from app.workers.celery_app import celery_app, run_async
 

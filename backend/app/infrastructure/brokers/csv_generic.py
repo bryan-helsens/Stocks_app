@@ -143,10 +143,7 @@ def _parse_decimal(value: str | None) -> Decimal | None:
     v = v.replace("€", "").replace("$", "").replace("£", "")
     # If both separators present, the last one is the decimal separator.
     if "," in v and "." in v:
-        if v.rfind(",") > v.rfind("."):
-            v = v.replace(".", "").replace(",", ".")
-        else:
-            v = v.replace(",", "")
+        v = v.replace(".", "").replace(",", ".") if v.rfind(",") > v.rfind(".") else v.replace(",", "")
     elif "," in v:
         # Single comma: treat as decimal separator (European).
         v = v.replace(",", ".")

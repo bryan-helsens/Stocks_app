@@ -74,7 +74,7 @@ class AuthenticationError(AppError):
     status_code = status.HTTP_401_UNAUTHORIZED
 
 
-class PermissionError_(AppError):  # noqa: N801 - avoid shadowing builtin name
+class ForbiddenError(AppError):
     code = "forbidden"
     status_code = status.HTTP_403_FORBIDDEN
 

@@ -8,7 +8,7 @@ pure dividend domain service. Projections are clearly labelled estimates (BR10).
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import Decimal
 from uuid import UUID
 
@@ -58,11 +58,12 @@ class DividendService:
             if div.pay_date:
                 by_month[div.pay_date.strftime("%Y-%m")] += net
                 by_year[div.pay_date.year] += net
+            country = div.source_country or (asset.country if asset else None) or "Unknown"
             by_sector[(asset.sector if asset else None) or "Unknown"] += net
-            by_country[(div.source_country or (asset.country if asset else None)) or "Unknown"] += net
+            by_country[country] += net
 
         # Dividend CAGR from yearly totals.
-        cagr = div_calc.dividend_cagr([(y, v) for y, v in by_year.items()])
+        cagr = div_calc.dividend_cagr(list(by_year.items()))
 
         months_count = len(by_month) or 1
         avg_monthly = total / Decimal(months_count)

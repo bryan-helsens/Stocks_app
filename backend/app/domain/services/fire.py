@@ -145,8 +145,5 @@ def _add_months(start: date, months: int) -> date:
 
 
 def _days_in_month(year: int, month: int) -> int:
-    if month == 12:
-        nxt = date(year + 1, 1, 1)
-    else:
-        nxt = date(year, month + 1, 1)
+    nxt = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
     return (nxt - date(year, month, 1)).days

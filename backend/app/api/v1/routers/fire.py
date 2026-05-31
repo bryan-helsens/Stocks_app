@@ -57,7 +57,9 @@ async def run_scenario(body: ScenarioRequest, _: CurrentUser) -> ScenarioRespons
         dividend_change_pct=body.dividend_change_pct,
         annual_dividend=body.annual_dividend,
     )
-    return ScenarioResponse(name=r.name, final_value=r.final_value, yearly=r.yearly, params=r.params)
+    return ScenarioResponse(
+        name=r.name, final_value=r.final_value, yearly=r.yearly, params=r.params,
+    )
 
 
 @router.post("/monte-carlo", response_model=MonteCarloResponse)

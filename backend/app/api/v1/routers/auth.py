@@ -37,7 +37,10 @@ async def register(body: RegisterRequest, auth: AuthDep) -> UserResponse:
 async def login(body: LoginRequest, auth: AuthDep) -> LoginResponse:
     result = await auth.authenticate(body.email, body.password)
     tokens = (
-        TokenResponse(access_token=result.tokens.access_token, refresh_token=result.tokens.refresh_token)
+        TokenResponse(
+            access_token=result.tokens.access_token,
+            refresh_token=result.tokens.refresh_token,
+        )
         if result.tokens
         else None
     )

@@ -9,8 +9,8 @@ that drive the same async services via :func:`run_async`.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 from collections.abc import Coroutine
+from typing import Any
 
 from celery import Celery
 from celery.schedules import crontab

@@ -50,8 +50,9 @@ class PdfParser:
     def _extract_text(content: bytes) -> str:
         # pypdf is an optional dependency; import lazily so the app starts
         # without it and the error is surfaced only when a PDF is uploaded.
-        from pypdf import PdfReader  # type: ignore
         import io
+
+        from pypdf import PdfReader  # type: ignore
 
         reader = PdfReader(io.BytesIO(content))
         return "\n".join((page.extract_text() or "") for page in reader.pages)

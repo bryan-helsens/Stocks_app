@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date
-from decimal import Decimal
 
 from app.domain.ports.market_data import AssetInfo, PriceBar, Quote
 from app.domain.value_objects.money import to_decimal

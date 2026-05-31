@@ -13,8 +13,8 @@ from sqlalchemy import select
 
 from app.core.logging import get_logger
 from app.domain.value_objects.enums import TransactionType
-from app.infrastructure.db.base import get_session_factory
 from app.infrastructure.db import models
+from app.infrastructure.db.base import get_session_factory
 from app.workers.celery_app import celery_app, run_async
 
 logger = get_logger(__name__)

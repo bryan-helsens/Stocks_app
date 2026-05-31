@@ -56,7 +56,9 @@ class TransactionService:
 
         dedup = compute_dedup_hash(tx)
         if not allow_duplicate and await self._tx.exists_by_dedup(tx.user_id, dedup):
-            raise ConflictError("This transaction appears to already exist.", details={"dedup": dedup})
+            raise ConflictError(
+                "This transaction appears to already exist.", details={"dedup": dedup},
+            )
 
         # Compute net amount if not provided.
         if tx.net_amount == 0 and tx.gross_amount:
@@ -111,6 +113,7 @@ class TransactionService:
                 raise ValidationError(f"{tx.type} requires a positive quantity.")
             if tx.price is None or tx.price < 0:
                 raise ValidationError(f"{tx.type} requires a non-negative price.")
-        if tx.type in (TransactionType.STOCK_SPLIT, TransactionType.REVERSE_SPLIT):
-            if tx.split_ratio is None or tx.split_ratio <= 0:
-                raise ValidationError("Split requires a positive ratio.")
+        if tx.type in (TransactionType.STOCK_SPLIT, TransactionType.REVERSE_SPLIT) and (
+            tx.split_ratio is None or tx.split_ratio <= 0
+        ):
+            raise ValidationError("Split requires a positive ratio.")

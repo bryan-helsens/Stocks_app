@@ -18,7 +18,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
-from pydantic import BaseModel, Field, ValidationError as PydanticValidationError
+from pydantic import BaseModel, Field
+from pydantic import ValidationError as PydanticValidationError
 
 from app.core.logging import get_logger
 from app.domain.ports.llm import LLMMessage, LLMProvider

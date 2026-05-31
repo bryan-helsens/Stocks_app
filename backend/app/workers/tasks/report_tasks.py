@@ -10,12 +10,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from app.core.logging import get_logger
 from app.application.services.portfolio import PortfolioService
 from app.application.services.report_service import ReportService
+from app.core.logging import get_logger
 from app.domain.value_objects.enums import ReportStatus
-from app.infrastructure.db.base import get_session_factory
 from app.infrastructure.db import models
+from app.infrastructure.db.base import get_session_factory
 from app.infrastructure.db.repositories import SqlAssetRepository, SqlPositionRepository
 from app.infrastructure.db.repositories.users import SqlPortfolioRepository
 from app.infrastructure.market_data import get_market_data_provider

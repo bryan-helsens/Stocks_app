@@ -12,7 +12,7 @@ from decimal import Decimal
 
 from app.application.services.portfolio import PortfolioSummary
 from app.domain.entities import Fundamentals
-from app.domain.services import risk, scoring
+from app.domain.services import risk
 from app.domain.services.scoring import score_asset
 
 

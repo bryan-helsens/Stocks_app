@@ -11,15 +11,18 @@ from fastapi import APIRouter
 
 from app.api.v1.routers import (
     ai,
+    analysis,
     auth,
     dividends,
     fire,
     health,
     imports,
+    market,
     portfolios,
     reports,
     tax,
     transactions,
+    watchlists,
 )
 
 api_router = APIRouter()
@@ -33,3 +36,6 @@ api_router.include_router(dividends.router)
 api_router.include_router(fire.router)
 api_router.include_router(tax.router)
 api_router.include_router(reports.router)
+api_router.include_router(analysis.router)
+api_router.include_router(market.router)
+api_router.include_router(watchlists.router)

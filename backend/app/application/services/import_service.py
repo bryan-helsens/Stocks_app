@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
+from app.application.services.transactions import TransactionService
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.entities import Asset, Transaction
 from app.domain.ports.broker_parser import TransactionDraft
@@ -30,7 +31,6 @@ from app.infrastructure.brokers import select_parser
 from app.infrastructure.db import models
 from app.infrastructure.db.repositories import SqlAssetRepository, SqlTransactionRepository
 from app.infrastructure.db.repositories.users import SqlPortfolioRepository
-from app.application.services.transactions import TransactionService
 
 
 @dataclass(slots=True)
@@ -135,7 +135,9 @@ class ImportService:
                     "isin": draft.isin,
                     "quantity": str(draft.quantity) if draft.quantity is not None else None,
                     "price": str(draft.price) if draft.price is not None else None,
-                    "gross_amount": str(draft.gross_amount) if draft.gross_amount is not None else None,
+                    "gross_amount": (
+                        str(draft.gross_amount) if draft.gross_amount is not None else None
+                    ),
                     "fee": str(draft.fee),
                     "tax": str(draft.tax),
                     "currency": draft.currency,
@@ -182,7 +184,9 @@ class ImportService:
         for row in rows:
             norm = row.normalized or {}
             asset_id = await self._resolve_asset_id(norm)
-            tx = self._draft_to_transaction(user_id, batch.portfolio_id, norm, asset_id, row.suggested_type)
+            tx = self._draft_to_transaction(
+                user_id, batch.portfolio_id, norm, asset_id, row.suggested_type,
+            )
             try:
                 saved = await self._tx_service.add_transaction(tx)
             except Exception:  # noqa: BLE001 - skip rows that fail validation
