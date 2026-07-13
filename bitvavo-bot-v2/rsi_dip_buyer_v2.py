@@ -85,7 +85,17 @@ class StrategyConfig:
     rr_target: float = 1.6             # gemiddelde TP = entry + 1.6 × risico
     risk_per_trade_pct: float = 0.75   # % van equity dat één trade mag riskeren
     min_notional: float = 5.0          # exchange-minimum
-    fee_pct_round_trip: float = 0.30   # meegenomen in edge-check
+
+    # ---- kostenmodel (DE les uit de echte 60d-backtest) --------------------
+    # Fees + slippage zijn ~vast in prijs-%; bij een krappe stop exploderen ze
+    # in R-termen: bij ATR 0.2% (typisch 15m) is de stop 0.4% en de kosten
+    # 0.85% → een TP-hit levert netto +0.35R en een SL-hit −3.1R. Dáárom
+    # faalde v2.1 op 15m (PF 0.21, worst −3.25R). De cost-gate weigert nu elke
+    # trade waar de kosten meer dan max_cost_per_risk van het risico opeten —
+    # op 15m handelt de strategie dan vrijwel niet (terecht), op 1h/4h wél.
+    fee_pct_round_trip: float = 0.50   # 0.25% taker per zijde (Bitvavo)
+    stop_slippage_pct: float = 0.35    # gemeten uit jouw v1-fills
+    max_cost_per_risk: float = 0.30    # (fees+slip)/stop% ≤ 0.30, anders skip
 
     # ---- partial take-profit (sluit aan op take_profit_levels/size_fraction) --
     # 50% eraf bij +1R (stop gaat dan naar break-even), rest naar een verder
@@ -280,17 +290,28 @@ class EntryGate:
             reasons.append(f"score {score:.0f} < drempel {cfg.min_quality_score:.0f}")
             return EntryDecision(False, score, reasons)
 
-        # -- Stop/TP volgens RiskModel; edge-check inclusief fees.
+        # -- COST-GATE: kosten mogen max. `max_cost_per_risk` van 1R zijn. ----
+        # Dit is de fix voor de echte-data-backtest die v2.1 afkeurde:
+        # bij een stop van 0.4% zijn 0.85% kosten −2.1R extra verlies per
+        # SL-hit en vreten ze een TP-hit vrijwel op. Netto-R vooraf uitrekenen
+        # en te dure trades keihard weigeren.
         stop = price - cfg.stop_atr_mult * cur_atr
         risk = price - stop
-        tp = price + cfg.rr_target * risk
-        tp_pct = 100.0 * (tp - price) / price
-        if tp_pct <= cfg.fee_pct_round_trip * 2.0:
-            reasons.append("TP te klein t.o.v. fees — trade heeft geen nut")
+        stop_pct = 100.0 * risk / price
+        cost_pct = cfg.fee_pct_round_trip + cfg.stop_slippage_pct
+        cost_per_risk = cost_pct / stop_pct if stop_pct > 0 else 99.0
+        if cost_per_risk > cfg.max_cost_per_risk:
+            reasons.append(
+                f"kosten {cost_pct:.2f}% = {cost_per_risk:.2f}R van het risico "
+                f"(stop {stop_pct:.2f}%) > max {cfg.max_cost_per_risk:.2f}R — "
+                "timeframe/symbool te duur om te traden")
             return EntryDecision(False, score, reasons)
 
-        reasons.append(f"KOOP: score {score:.0f}, stop {stop:.6g} (2×ATR), "
-                       f"TP {tp:.6g} ({cfg.rr_target}R)")
+        tp = price + cfg.rr_target * risk
+        net_win_r = (cfg.rr_target * stop_pct - cfg.fee_pct_round_trip) / stop_pct
+        net_loss_r = -(stop_pct + cost_pct) / stop_pct
+        reasons.append(f"KOOP: score {score:.0f}, stop {stop:.6g} ({stop_pct:.2f}%), "
+                       f"TP {tp:.6g} — netto {net_win_r:+.2f}R / {net_loss_r:+.2f}R")
         return EntryDecision(True, score, reasons, stop_price=stop,
                              take_profit=tp, atr_value=cur_atr)
 

@@ -30,20 +30,27 @@ def flat_candles(n: int, price: float = 100.0, wiggle: float = 0.3) -> list[Cand
     return out
 
 
-def uptrend_with_dip(n: int = 260, start: float = 100.0) -> list[Candle]:
-    """Gestage uptrend, dan een dip van ~10 rode bars, dan 2 groene draai-bars."""
+def uptrend_with_dip(n: int = 260, start: float = 100.0,
+                     wide_ranges: bool = True) -> list[Candle]:
+    """Gestage uptrend, dip van ~10 rode bars, dan 2 groene draai-bars.
+
+    ``wide_ranges=True`` geeft ±1.2% wieken -> ATR ~2.4% -> stop ~4.8% ->
+    kosten (0.85%) ~ 0.18R: passeert de cost-gate. Met ``wide_ranges=False``
+    is ATR ~0.3% en hoort de cost-gate juist te weigeren.
+    """
+    hw = 0.012 if wide_ranges else 0.0015      # wiek-breedte
     out, p = [], start
     for i in range(n - 12):
         p *= 1.003                      # +0.3%/bar uptrend
-        out.append(Candle(i, p / 1.002, p * 1.002, p / 1.004, p))
+        out.append(Candle(i, p / 1.002, p * (1 + hw), p / (1 + hw + 0.002), p))
     for i in range(10):                 # dip: kleine rode bars
         prev = p
         p *= 0.994
-        out.append(Candle(n - 12 + i, prev, prev * 1.001, p * 0.999, p))
+        out.append(Candle(n - 12 + i, prev, prev * (1 + hw), p * (1 - hw), p))
     for i in range(2):                  # draai: groene bars
         prev = p
         p *= 1.004
-        out.append(Candle(n - 2 + i, prev, p * 1.001, prev * 0.999, p))
+        out.append(Candle(n - 2 + i, prev, p * (1 + hw), prev * (1 - hw), p))
     return out
 
 
@@ -357,3 +364,25 @@ def test_cooldown_blocks_reentry_then_expires():
     assert cd.blocked("FETEUR", 100 + CFG.cooldown_bars_after_stop - 1)
     assert not cd.blocked("FETEUR", 100 + CFG.cooldown_bars_after_stop)
     assert not cd.blocked("ETHEUR", 101)     # ander symbool niet geblokkeerd
+
+
+# --------------------------------------------------------------------------- #
+# cost-gate: de fix uit de echte 60d-backtest (PF 0.21, worst -3.25R op 15m)
+# --------------------------------------------------------------------------- #
+def test_cost_gate_refuses_tight_atr_setups():
+    """Krappe ATR (15m-achtig) -> kosten domineren R -> gate weigert."""
+    cs = uptrend_with_dip(wide_ranges=False)       # ATR% ~0.3 -> stop ~0.6%
+    d = EntryGate(CFG).evaluate("BTCEUR", cs)
+    assert not d.allowed
+    assert any("kosten" in r for r in d.reasons), d.reasons
+
+
+def test_cost_gate_math_matches_promise():
+    """Als de gate WEL toestaat, zijn kosten <= max_cost_per_risk van 1R."""
+    cs = uptrend_with_dip(wide_ranges=True)
+    d = EntryGate(CFG).evaluate("BTCEUR", cs)
+    assert d.allowed, d.reasons
+    price = cs[-1].close
+    stop_pct = 100.0 * (price - d.stop_price) / price
+    cost_pct = CFG.fee_pct_round_trip + CFG.stop_slippage_pct
+    assert cost_pct / stop_pct <= CFG.max_cost_per_risk

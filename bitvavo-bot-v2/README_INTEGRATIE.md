@@ -157,3 +157,37 @@ python3 backtest.py --synthetic               # offline smoke-test
 
 Beoordeel v2 pas als "goed" bij: PF > 1.3, gem. verlies ≤ 1R, maxDD < 8%,
 en dat over ≥ 60 dagen die zowel groene als rode weken bevatten.
+
+## Nieuw in v2.2 — de kosten-gate (fix na jouw échte backtest)
+
+Jouw 60-dagen backtest op de VPS bewees dat v2.1 **slechter** was dan v1
+(PF 0.21, worst −3.25R). De oorzaak zat niet in de strategie maar in de
+kosten, uitgedrukt in R:
+
+- Op 15m is de ATR vaak maar ~0.2%. Stop = 2×ATR = **0.4%**.
+- Vaste kosten per trade: 0.50% fees (round-trip) + 0.35% stop-slippage
+  = **0.85%** — meer dan twee keer de stopafstand.
+- Gevolg: een TP-hit leverde netto maar **+0.35R** op, een SL-hit kostte
+  netto **−3.1R**. Met zulke payoffs is winst wiskundig onmogelijk,
+  hoe goed de entries ook zijn.
+
+De fix (`EntryGate`): een trade wordt geweigerd als de vaste kosten meer
+dan `max_cost_per_risk` (default **0.30R**) van het risico opeten:
+
+```python
+fee_pct_round_trip: float = 0.50   # 0.25% taker per zijde (Bitvavo)
+stop_slippage_pct: float = 0.35    # gemeten uit jouw v1-fills
+max_cost_per_risk: float = 0.30    # (fees+slip)/stop% ≤ 0.30, anders skip
+```
+
+Praktische consequentie: de gate eist een stopafstand van minstens
+~2.8% (dus ATR ≥ ~1.4%). **Op 15m komt dat zelden voor — dat timeframe
+is bij deze kosten structureel te duur.** Draai de backtest daarom op 1h:
+
+```bash
+python3 backtest.py --interval 1h --days 120
+python3 backtest.py --interval 1h --days 90 --only v2
+```
+
+Het rapport toont nu ook `avgW`/`avgL` apart, zodat je meteen ziet of de
+verliezen netjes rond −1R blijven (dat is waar v2.1 op faalde).

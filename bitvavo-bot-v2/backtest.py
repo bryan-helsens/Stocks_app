@@ -79,11 +79,11 @@ def synthetic(days: int = 30, seed: int = 7, kind: str = "mixed") -> list[Candle
         drift = {"up": 0.0004, "down": -0.0004, "mixed":
                  0.0006 * math.sin(i / 400.0)}[kind]
         shock = -0.03 if (kind == "mixed" and i % 1500 == 1499) else 0.0
-        r = rng.gauss(drift + shock, 0.004)
+        r = rng.gauss(drift + shock, 0.011)
         o = p
         p = max(0.01, p * (1.0 + r))
-        hi = max(o, p) * (1.0 + abs(rng.gauss(0, 0.0015)))
-        lo = min(o, p) * (1.0 - abs(rng.gauss(0, 0.0015)))
+        hi = max(o, p) * (1.0 + abs(rng.gauss(0, 0.004)))
+        lo = min(o, p) * (1.0 - abs(rng.gauss(0, 0.004)))
         out.append(Candle(i * 900.0, o, hi, lo, p, 1.0))
     return out
 
@@ -140,9 +140,13 @@ class Result:
             mdd = max(mdd, (peak - v) / peak)
         avg_r = statistics.mean(x.r_multiple for x in t)
         worst_r = min(x.r_multiple for x in t)
+        win_rs = [x.r_multiple for x in t if x.net_pnl > 0]
+        loss_rs = [x.r_multiple for x in t if x.net_pnl <= 0]
+        avg_w = statistics.mean(win_rs) if win_rs else 0.0
+        avg_l = statistics.mean(loss_rs) if loss_rs else 0.0
         return (f"{self.name:>4} | trades {len(t):>3} | winrate {len(wins)/len(t):5.1%} | "
-                f"PF {pf:5.2f} | avg {avg_r:+.2f}R | worst {worst_r:+.2f}R | "
-                f"eind €{eq[-1]:8.2f} | maxDD {mdd:5.1%}")
+                f"PF {pf:5.2f} | avgW {avg_w:+.2f}R avgL {avg_l:+.2f}R | "
+                f"worst {worst_r:+.2f}R | eind €{eq[-1]:8.2f} | maxDD {mdd:5.1%}")
 
 
 def _sell(price: float, qty: float, entry: float, slip_pct: float = 0.0) -> float:
