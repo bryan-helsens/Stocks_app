@@ -56,6 +56,24 @@ def log(msg: str) -> None:
         f.write(line + "\n")
 
 
+def notify(st: dict, title: str, msg: str, tags: str = "robot") -> None:
+    """Pushmelding via ntfy.sh — alleen als er een topic is ingesteld.
+
+    Instellen: python3 paper_trader_v2.py --set-ntfy mijn-geheim-topic
+    en zet de ntfy-app op je telefoon op datzelfde topic.
+    """
+    topic = st.get("ntfy_topic")
+    if not topic:
+        return
+    try:
+        req = urllib.request.Request(
+            f"https://ntfy.sh/{topic}", data=msg.encode(),
+            headers={"Title": title, "Tags": tags})
+        urllib.request.urlopen(req, timeout=10).read()
+    except Exception as e:                    # melding mag nooit de bot breken
+        log(f"ntfy mislukt: {e}")
+
+
 def fetch(market: str, interval: str, limit: int = HISTORY_BARS) -> list[Candle]:
     url = (f"https://api.bitvavo.com/v2/{market}/candles"
            f"?interval={interval}&limit={min(limit, 1440)}")
@@ -122,6 +140,10 @@ def process_bar(st: dict, cfg: StrategyConfig, sym: str, window: list[Candle],
             log(f"KOOP  {sym}: {plan.quantity:.6f} @ €{plan.entry:.4f} "
                 f"(stop €{plan.stop:.4f}, risico €{plan.risk_amount:.2f}, "
                 f"score {p['score']:.0f})")
+            notify(st, f"KOOP {sym} (papier)",
+                   f"{plan.quantity:.6f} @ €{plan.entry:.4f}, stop "
+                   f"€{plan.stop:.4f}, score {p['score']:.0f}",
+                   tags="shopping_cart")
         else:
             log(f"skip {sym}: signaal verviel bij planning (notional/stop)")
     pending.pop(sym, None)
@@ -149,6 +171,11 @@ def process_bar(st: dict, cfg: StrategyConfig, sym: str, window: list[Candle],
             del positions[sym]
             log(f"SLUIT {sym}: {reason} @ €{fill:.4f} → {pnl:+.2f} EUR "
                 f"({r:+.2f}R) | equity €{st['equity']:.2f}")
+            notify(st, f"SLUIT {sym} (papier)",
+                   f"{reason}: {pnl:+.2f} EUR ({r:+.2f}R) — "
+                   f"equity €{st['equity']:.2f}",
+                   tags="chart_with_upwards_trend" if pnl > 0
+                   else "chart_with_downwards_trend")
 
         if bar.open <= pos["stop"]:                       # gap onder de stop
             close(bar.open, "gap_stop")
@@ -179,11 +206,17 @@ def process_bar(st: dict, cfg: StrategyConfig, sym: str, window: list[Candle],
                     del positions[sym]
                     log(f"SLUIT {sym}: take_profit @ €{tp_price:.4f} → "
                         f"{total:+.2f} EUR ({r:+.2f}R) | equity €{st['equity']:.2f}")
+                    notify(st, f"SLUIT {sym} (papier)",
+                           f"take-profit: {total:+.2f} EUR ({r:+.2f}R) — "
+                           f"equity €{st['equity']:.2f}", tags="tada")
                     return
                 pos["stop"] = max(pos["stop"], pos["entry"])
                 pos["break_even"] = True
                 log(f"TP1   {sym}: {frac:.0%} verkocht @ €{tp_price:.4f} "
                     f"({pnl:+.2f} EUR), stop → break-even")
+                notify(st, f"TP1 {sym} (papier)",
+                       f"{frac:.0%} verkocht ({pnl:+.2f} EUR), "
+                       "stop naar break-even", tags="dart")
 
         d = manager.manage(entry_price=pos["entry"], stop_loss=pos["stop"],
                            break_even_armed=pos["break_even"],
@@ -355,6 +388,9 @@ def main() -> None:
                     help="(alleen eerste run) komma-gescheiden markten")
     ap.add_argument("--equity", type=float, default=100.0,
                     help="(alleen eerste run) startbedrag in EUR")
+    ap.add_argument("--set-ntfy", metavar="TOPIC", default=None,
+                    help="pushmeldingen via ntfy.sh naar dit topic "
+                         "(leeg = uitzetten); stuurt meteen een testmelding")
     args = ap.parse_args()
 
     if args.reset:
@@ -367,6 +403,20 @@ def main() -> None:
     st = load_state()
     if st is None:
         st = init_state(args)
+
+    if args.set_ntfy is not None:
+        st["ntfy_topic"] = args.set_ntfy or None
+        save_state(st)
+        if st["ntfy_topic"]:
+            notify(st, "Paper-bot gekoppeld",
+                   "Meldingen staan aan — je krijgt een push bij elke "
+                   "papieren koop en verkoop.", tags="white_check_mark")
+            print(f"ntfy aan → https://ntfy.sh/{st['ntfy_topic']} "
+                  "(testmelding verstuurd; zet de ntfy-app op dit topic)")
+        else:
+            print("ntfy-meldingen uitgezet")
+        return
+
     if args.status:
         show_status(st)
         return

@@ -249,3 +249,24 @@ Instellingen worden bij de EERSTE run vastgelegd en daarna genegeerd,
 zodat de meting consistent blijft. Opnieuw beginnen: `--reset`.
 Geen cron maar één proces: `python3 paper_trader_v2.py --loop` (bv. in
 `screen`/`tmux`), die wordt vanzelf elke bar wakker.
+
+## Pushmeldingen op je telefoon (ntfy.sh)
+
+Met ~1 trade per maand wil je een pushmelding, geen dashboard-gestaar.
+Gratis en zonder account via [ntfy.sh](https://ntfy.sh):
+
+```bash
+# 1) verzin een geheim topic (het topic ís het wachtwoord — maak het lang):
+python3 paper_trader_v2.py --set-ntfy bryan-bot-x7k2m9q4
+
+# 2) installeer de ntfy-app (Android/iOS) en abonneer op datzelfde topic
+# 3) klaar — je krijgt een push bij elke papieren KOOP/SLUIT/TP1
+#    uitzetten: python3 paper_trader_v2.py --set-ntfy ""
+```
+
+## Gezondheidsbewaking
+
+Het dashboard toont bovenaan de laatst verwerkte bar en waarschuwt met
+een rode banner zodra de trader ≥ 2 bars achterloopt (service gecrasht,
+API onbereikbaar, …). Stilte betekent dus echt "geen trades", niet
+"kapot".

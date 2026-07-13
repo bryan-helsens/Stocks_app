@@ -758,6 +758,20 @@ def render(st: dict | None) -> str:
         for y, v in sorted(by_year.items())) or (
         "<tr><td colspan='4' class='empty'>nog geen gesloten trades</td></tr>")
 
+    # gezondheid: draait de trader nog? (laatst verwerkte bar vs verwachte)
+    sec_per = {"1h": 3600, "2h": 7200, "4h": 14400}.get(st["interval"], 3600)
+    newest_closed = (int(time.time()) // sec_per - 1) * sec_per
+    lag_bars = ((newest_closed - st["last_ts"]) / sec_per
+                if st["last_ts"] else 0.0)
+    health = ""
+    if st["last_ts"] and lag_bars >= 2:
+        health = (f'<div class="card" style="border-color:var(--down);'
+                  f'margin-bottom:16px"><b style="color:var(--down)">'
+                  f'⚠ trader loopt {lag_bars:.0f} bars achter</b> — laatste '
+                  f'verwerkte bar {fmt_ts(st["last_ts"])}. Check op de VPS: '
+                  '<code>systemctl status paperbot-v2</code> en '
+                  '<code>journalctl -u paperbot-v2 -n 30</code></div>')
+
     now = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
     return f"""<!doctype html>
 <html lang="nl"><head><meta charset="utf-8">
@@ -766,8 +780,10 @@ def render(st: dict | None) -> str:
 <title>Paper-bot v2</title>
 <style>{STYLE}</style></head><body>
 <h1>Paper-bot v2 — rsi_dip_buyer</h1>
-<div class="meta">nepgeld · alleen-lezen · bijgewerkt {now} · pagina ververst
-elke 60&nbsp;s</div>
+<div class="meta">nepgeld · alleen-lezen · bijgewerkt {now} · laatste bar
+{fmt_ts(st["last_ts"]) if st["last_ts"] else "—"} · meldingen
+{"aan" if st.get("ntfy_topic") else "uit"} · ververst elke 60&nbsp;s</div>
+{health}
 <div class="tiles">{tiles}</div>
 <h2>Equity (gerealiseerd, per gesloten trade)</h2>
 <div class="card">{svg_equity(st)}</div>
