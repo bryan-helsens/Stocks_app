@@ -49,7 +49,8 @@ DEFAULT_MARKETS = ["BTC-EUR", "ETH-EUR", "SOL-EUR", "XRP-EUR", "ADA-EUR",
 # --------------------------------------------------------------------------- #
 def fetch_bitvavo(market: str, interval: str = "15m", days: int = 60) -> list[Candle]:
     """Haalt candles op via de publieke Bitvavo-API (paginatie via `end`)."""
-    ms_per = {"5m": 300_000, "15m": 900_000, "1h": 3_600_000}[interval]
+    ms_per = {"5m": 300_000, "15m": 900_000, "1h": 3_600_000,
+              "2h": 7_200_000, "4h": 14_400_000}[interval]
     need = days * 24 * 3600 * 1000 // ms_per
     out: list[Candle] = []
     end = int(time.time() * 1000)
@@ -329,9 +330,13 @@ def run_v1(series: dict[str, list[Candle]], start_equity: float = 100.0) -> Resu
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--days", type=int, default=60)
-    ap.add_argument("--interval", default="15m", choices=["5m", "15m", "1h"])
+    ap.add_argument("--interval", default="15m",
+                    choices=["5m", "15m", "1h", "2h", "4h"])
     ap.add_argument("--markets", default=",".join(DEFAULT_MARKETS))
     ap.add_argument("--only", choices=["v1", "v2"], default=None)
+    ap.add_argument("--maker", action="store_true",
+                    help="reken met limit-order (maker) fees: 0.15%%/zijde "
+                         "i.p.v. 0.25%% taker")
     ap.add_argument("--synthetic", action="store_true",
                     help="offline smoke-test zonder netwerk")
     args = ap.parse_args()
@@ -351,8 +356,12 @@ def main() -> None:
             series[m] = fetch_bitvavo(m, args.interval, args.days)
         btc = series.get("BTC-EUR") or fetch_bitvavo("BTC-EUR", args.interval, args.days)
 
-    cfg = StrategyConfig()
-    print("\n=== resultaat (start €100, fees 0.25%/zijde, stop-slippage 0.35%) ===")
+    global FEE_SIDE_PCT
+    if args.maker:
+        FEE_SIDE_PCT = 0.15
+    cfg = StrategyConfig(fee_pct_round_trip=2 * FEE_SIDE_PCT)
+    print(f"\n=== resultaat (start €100, fees {FEE_SIDE_PCT}%/zijde, "
+          f"stop-slippage {STOP_SLIPPAGE_PCT}%) ===")
     if args.only in (None, "v1"):
         print(run_v1(series).report())
     if args.only in (None, "v2"):

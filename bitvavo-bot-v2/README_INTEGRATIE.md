@@ -191,3 +191,22 @@ python3 backtest.py --interval 1h --days 90 --only v2
 
 Het rapport toont nu ook `avgW`/`avgL` apart, zodat je meteen ziet of de
 verliezen netjes rond −1R blijven (dat is waar v2.1 op faalde).
+
+### Twee knoppen om méér (betaalbare) trades te vinden
+
+De 120-dagen 1h-run gaf maar 4 trades: bij 0.85% vaste kosten zijn er
+gewoon weinig setups die de moeite waard zijn. Twee eerlijke manieren om
+dat te verruimen — allebei verlagen ze de kosten, niet de lat:
+
+1. **`--maker`** — rekent met limit-order (maker) fees: 0.15%/zijde
+   i.p.v. 0.25% taker. Round-trip zakt van 0.50% naar 0.30%, waardoor de
+   gate stops vanaf ~2.2% accepteert i.p.v. ~2.8%. Alleen eerlijk als je
+   live bot óók met limit orders instapt.
+2. **`--interval 2h` of `4h`** — grotere ATR → bredere stops → kosten
+   worden een kleiner deel van het risico. Neem dan meer dagen
+   (`--days 240`) zodat je genoeg bars houdt.
+
+```bash
+python3 backtest.py --interval 1h --days 120 --maker
+python3 backtest.py --interval 4h --days 240
+```
