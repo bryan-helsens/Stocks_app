@@ -271,6 +271,112 @@ def run_v2(series: dict[str, list[Candle]], btc: list[Candle],
     return res
 
 
+def run_v3(series: dict[str, list[Candle]], btc: list[Candle],
+           cfg, start_equity: float = 100.0) -> Result:
+    """v3 momentum/breakout: partial op +2R, rest op chandelier-trail.
+
+    Zelfde realisme als run_v2 (fees, slippage, gaps, next-bar-open entry,
+    stop-vóór-TP). Verschil: na de partial wordt de positie NIET gesloten —
+    de rest loopt door tot de (trailing) stop of een manager-exit.
+    """
+    from momentum_breakout_v3 import BreakoutGate, RiskModelV3, TrailManager
+
+    gate, riskm = BreakoutGate(cfg), RiskModelV3(cfg)
+    manager, guard = TrailManager(cfg), CrashGuard(cfg)
+    cooldown = CooldownTracker(cfg)
+    res = Result("v3")
+    equity = start_equity
+    positions: dict[str, OpenPos] = {}
+    pending: dict[str, object] = {}
+    n = min(len(s) for s in series.values())
+    warmup = max(cfg.ema_slow, cfg.breakout_lookback) + 5
+
+    for i in range(warmup, n):
+        regime = guard.market_regime(btc[: i + 1][-cfg.market_window_bars - 2:])
+        for sym, candles in series.items():
+            window = candles[: i + 1]
+            bar = window[-1]
+
+            if sym in pending and sym not in positions:
+                plan = riskm.plan(sym, equity, pending.pop(sym), price=bar.open)
+                if plan:
+                    positions[sym] = OpenPos(sym, plan.entry, plan.stop,
+                                             list(plan.tp_levels), plan.quantity,
+                                             plan.entry - plan.stop)
+            pending.pop(sym, None)
+
+            pos = positions.get(sym)
+            if pos:
+                pos.bars_held += 1
+                risk_amt = pos.risk_per_unit * pos.orig_qty
+                closed = False
+
+                if bar.open <= pos.stop:                     # gap onder stop
+                    pnl = pos.realized + _sell(bar.open, pos.qty, pos.entry)
+                    equity += pnl
+                    res.trades.append(Trade(sym, pos.entry, bar.open, pos.qty,
+                                            "gap_stop", pnl / risk_amt, pnl))
+                    if pnl < 0:
+                        cooldown.record_loss_exit(sym, i)
+                    del positions[sym]; closed = True
+                elif bar.low <= pos.stop:                    # intrabar stop
+                    pnl = pos.realized + _sell(pos.stop, pos.qty, pos.entry,
+                                               STOP_SLIPPAGE_PCT)
+                    equity += pnl
+                    reason = "trail_stop" if pos.stop > pos.entry else "stop"
+                    res.trades.append(Trade(sym, pos.entry, pos.stop, pos.qty,
+                                            reason, pnl / risk_amt, pnl))
+                    if pnl < 0:
+                        cooldown.record_loss_exit(sym, i)
+                    del positions[sym]; closed = True
+                else:
+                    # partial TP (limit-fill); positie blijft daarna open!
+                    for tp_price, frac in list(pos.tp_levels):
+                        if bar.high >= tp_price:
+                            part_qty = min(pos.orig_qty * frac, pos.qty)
+                            pos.realized += _sell(tp_price, part_qty, pos.entry)
+                            pos.qty -= part_qty
+                            pos.tp_levels.remove((tp_price, frac))
+                            pos.stop = max(pos.stop, pos.entry)
+                            pos.break_even = True
+
+                if not closed and sym in positions:
+                    d = manager.manage(entry_price=pos.entry, stop_loss=pos.stop,
+                                       break_even_armed=pos.break_even,
+                                       bars_held=pos.bars_held,
+                                       candles=window, regime=regime)
+                    if d.action is ManageAction.EXIT_NOW:
+                        pnl = pos.realized + _sell(bar.close, pos.qty, pos.entry,
+                                                   STOP_SLIPPAGE_PCT / 2)
+                        equity += pnl
+                        res.trades.append(Trade(sym, pos.entry, bar.close,
+                                                pos.qty, d.reason.split(":")[0],
+                                                pnl / risk_amt, pnl))
+                        if pnl < 0:
+                            cooldown.record_loss_exit(sym, i)
+                        del positions[sym]
+                    elif d.action is ManageAction.RAISE_STOP and d.new_stop:
+                        pos.stop = max(pos.stop, d.new_stop)
+                        if pos.stop >= pos.entry:
+                            pos.break_even = True
+
+            if sym not in positions and len(positions) < cfg.max_open_positions \
+               and not cooldown.blocked(sym, i):
+                dec = gate.evaluate(sym, window, regime=regime)
+                if dec.allowed:
+                    pending[sym] = dec
+        res.equity_curve.append(equity)
+
+    for sym, pos in positions.items():
+        last = series[sym][n - 1].close
+        pnl = pos.realized + _sell(last, pos.qty, pos.entry)
+        equity += pnl
+        res.trades.append(Trade(sym, pos.entry, last, pos.qty, "eod",
+                                pnl / (pos.risk_per_unit * pos.orig_qty), pnl))
+    res.equity_curve.append(equity)
+    return res
+
+
 def run_v1(series: dict[str, list[Candle]], start_equity: float = 100.0) -> Result:
     """Baseline die v1 nabootst: RSI<30 → koop, stop −2.55%, TP +2.45%,
     geen trendfilter, geen cooldown, geen interceptor (gemeten uit state.json)."""
@@ -332,7 +438,7 @@ def main() -> None:
     ap.add_argument("--interval", default="15m",
                     choices=["5m", "15m", "1h", "2h", "4h"])
     ap.add_argument("--markets", default=",".join(DEFAULT_MARKETS))
-    ap.add_argument("--only", choices=["v1", "v2"], default=None)
+    ap.add_argument("--only", choices=["v1", "v2", "v3"], default=None)
     ap.add_argument("--maker", action="store_true",
                     help="reken met limit-order (maker) fees: 0.15%%/zijde "
                          "i.p.v. 0.25%% taker")
@@ -365,6 +471,10 @@ def main() -> None:
         print(run_v1(series).report())
     if args.only in (None, "v2"):
         print(run_v2(series, btc, cfg).report())
+    if args.only in (None, "v3"):
+        from momentum_breakout_v3 import BreakoutConfig
+        cfg3 = BreakoutConfig(fee_pct_round_trip=2 * FEE_SIDE_PCT)
+        print(run_v3(series, btc, cfg3).report())
     print("\n⚠️  backtest ≠ toekomst; gebruik dit om ideeën te falsifiëren, "
           "niet om winst te voorspellen.")
 

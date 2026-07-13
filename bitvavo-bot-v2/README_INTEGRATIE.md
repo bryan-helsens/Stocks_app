@@ -270,3 +270,31 @@ Het dashboard toont bovenaan de laatst verwerkte bar en waarschuwt met
 een rode banner zodra de trader ≥ 2 bars achterloopt (service gecrasht,
 API onbereikbaar, …). Stilte betekent dus echt "geen trades", niet
 "kapot".
+
+## v3 — momentum/breakout (`momentum_breakout_v3.py`)
+
+Na de v1/v2-data was de conclusie: dips kopen heeft op deze markten geen
+eetbare edge na kosten. v3 draait het om — **koop sterkte, rijd de trend,
+trail de stop**:
+
+- entry: close boven de hoogste high van 55 bars, in een uptrend
+  (EMA50>EMA200), niet meer dan 1.5×ATR boven het breakout-niveau
+  (geen pumps chasen), volume- en momentum-bonus, BTC-regime niet BEAR
+- dezelfde KOSTEN-GATE als v2 (≤ 0.30R) — maar breakouts gebeuren juist
+  als de ATR groot is, dus de gate en de strategie werken hier sámen
+- exits: 50% winst op +2R (stop → break-even), rest op een
+  chandelier-trail (hoogste close − 3×ATR); crash-interceptor,
+  BEAR-exit, time-stop na 48 bars zonder progressie
+- 18 tests in `test_momentum_breakout_v3.py`
+
+Falsifiëren op de VPS (v3 draait nu standaard mee in de vergelijking):
+
+```bash
+python3 backtest.py --interval 1h --days 120 --maker
+python3 backtest.py --interval 4h --days 240
+python3 backtest.py --interval 1h --days 120 --only v3   # alleen v3
+```
+
+Beoordeel v3 op: PF > 1.3, avgW/avgL-verhouding ruim boven 1.5 (de winst
+zit in de staart), avgL rond −0.7R, maxDD < 10%, ≥ 30 trades. Pas als
+dat op écht data staat, bouwen we hem in de paper-trader.
