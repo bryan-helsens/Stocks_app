@@ -172,6 +172,93 @@ def svg_equity(st: dict) -> str:
             + dots + "".join(labels) + "</svg>")
 
 
+def svg_snapshots(st: dict) -> str:
+    """Lijn van de bar-close snapshots (equity incl. open posities)."""
+    snaps = st.get("snapshots", [])
+    if len(snaps) < 2:
+        return ('<div class="empty">nog geen snapshots — vullen zich vanzelf '
+                'zodra de trader nieuwe bars verwerkt</div>')
+    snaps = snaps[:: max(1, len(snaps) // 700)]
+    w, h, pad_l, pad_r, pad_t, pad_b = 860, 240, 56, 16, 14, 26
+    xs, ys = [s[0] for s in snaps], [s[1] for s in snaps]
+    x0, x1 = xs[0], xs[-1]
+    lo, hi = min(ys + [st["start_equity"]]), max(ys + [st["start_equity"]])
+    span = max(hi - lo, 0.5)
+    lo, hi = lo - span * 0.15, hi + span * 0.15
+
+    def X(t: float) -> float:
+        return pad_l + (w - pad_l - pad_r) * ((t - x0) / max(x1 - x0, 1))
+
+    def Y(v: float) -> float:
+        return pad_t + (h - pad_t - pad_b) * (1 - (v - lo) / (hi - lo))
+
+    d = "M " + " L ".join(f"{X(t):.1f} {Y(v):.1f}" for t, v in snaps)
+    grid, labels = [], []
+    for frac in (0.0, 0.5, 1.0):
+        v = lo + (hi - lo) * frac
+        y = Y(v)
+        grid.append(f'<line x1="{pad_l}" y1="{y:.1f}" x2="{w - pad_r}" '
+                    f'y2="{y:.1f}" stroke="var(--grid)" stroke-width="1"/>')
+        labels.append(f'<text x="{pad_l - 8}" y="{y + 4:.1f}" text-anchor="end" '
+                      f'class="axis">€{v:.2f}</text>')
+        t = x0 + (x1 - x0) * frac
+        anchor = "start" if frac == 0 else ("end" if frac == 1 else "middle")
+        labels.append(f'<text x="{X(t):.1f}" y="{h - 8}" text-anchor="{anchor}" '
+                      f'class="axis">{fmt_ts(t)}</text>')
+    y_start = Y(st["start_equity"])
+    startline = (f'<line x1="{pad_l}" y1="{y_start:.1f}" x2="{w - pad_r}" '
+                 f'y2="{y_start:.1f}" stroke="var(--baseline)" '
+                 'stroke-width="1" stroke-dasharray="4 4"/>')
+    return (f'<svg viewBox="0 0 {w} {h}" role="img" '
+            'aria-label="Equity inclusief open posities, per verwerkte bar">'
+            + "".join(grid) + startline
+            + f'<path d="{d}" fill="none" stroke="var(--series)" '
+              'stroke-width="2" stroke-linejoin="round"/>'
+            + "".join(labels) + "</svg>")
+
+
+def svg_symbol_bars(trades: list[dict]) -> str:
+    """Horizontale staafjes: netto P&L per symbool (groen winst, rood verlies)."""
+    per: dict[str, float] = {}
+    for t in trades:
+        per[t["sym"]] = per.get(t["sym"], 0.0) + t["pnl"]
+    if not per:
+        return '<div class="empty">nog geen afgesloten trades</div>'
+    items = sorted(per.items(), key=lambda kv: -kv[1])
+    v_lo = min(0.0, min(per.values()))
+    v_hi = max(0.0, max(per.values()))
+    # extra linkerruimte als er negatieve staven zijn: symbool + waarde-label
+    w, row_h, gap, pad_r, pad_t = 860, 22, 8, 76, 6
+    pad_l = 160 if v_lo < 0 else 96
+    h = pad_t * 2 + len(items) * (row_h + gap) - gap
+    span = max(v_hi - v_lo, 0.01)
+
+    def X(v: float) -> float:
+        return pad_l + (w - pad_l - pad_r) * ((v - v_lo) / span)
+
+    x_zero = X(0.0)
+    parts = [f'<line x1="{x_zero:.1f}" y1="{pad_t}" x2="{x_zero:.1f}" '
+             f'y2="{h - pad_t}" stroke="var(--baseline)" stroke-width="1"/>']
+    for i, (sym, v) in enumerate(items):
+        y = pad_t + i * (row_h + gap)
+        x = min(x_zero, X(v))
+        bw = abs(X(v) - x_zero)
+        color = ("var(--up)" if v > 0
+                 else ("var(--down)" if v < 0 else "var(--baseline)"))
+        lbl_x = X(v) + (6 if v >= 0 else -6)
+        anchor = "start" if v >= 0 else "end"
+        parts.append(
+            f'<rect x="{x:.1f}" y="{y}" width="{max(bw, 1):.1f}" '
+            f'height="{row_h}" rx="4" fill="{color}">'
+            f'<title>{html.escape(sym)}: {v:+.2f} EUR</title></rect>'
+            f'<text x="8" y="{y + row_h - 6}" text-anchor="start" '
+            f'class="axis" fill="var(--ink-2)">{html.escape(sym)}</text>'
+            f'<text x="{lbl_x:.1f}" y="{y + row_h - 6}" text-anchor="{anchor}" '
+            f'class="axis">{v:+.2f}</text>')
+    return (f'<svg viewBox="0 0 {w} {h}" role="img" '
+            'aria-label="Netto P&L per symbool">' + "".join(parts) + "</svg>")
+
+
 def pnl_cell(val: float, suffix: str = " EUR") -> str:
     if val > 0:
         return f'<td class="num up">▲ +{val:.2f}{suffix}</td>'
@@ -196,7 +283,7 @@ def render(st: dict | None) -> str:
     realized = st["equity"] - st["start_equity"]
 
     # open posities + live koers
-    pos_rows, unreal_total = [], 0.0
+    pos_rows, unreal_total, underwater = [], 0.0, 0
     for sym, p in st["positions"].items():
         px = last_price(sym)
         if px is not None:
@@ -204,6 +291,8 @@ def render(st: dict | None) -> str:
             fees = (p["entry"] + px) * p["qty"] * st["fee_side_pct"] / 100.0
             upnl = gross - fees + p.get("realized", 0.0)
             unreal_total += upnl
+            if upnl < 0:
+                underwater += 1
             r = upnl / (p["risk_per_unit"] * p["orig_qty"])
             live = f'<td class="num">€{px:.4f}</td>{pnl_cell(upnl)}<td class="num">{r:+.2f}R</td>'
         else:
@@ -249,27 +338,44 @@ def render(st: dict | None) -> str:
         f'<div class="tile"><div class="lbl">{label}</div>'
         f'<div class="val {cls}">{value}</div>'
         + (f'<div class="sub">{sub}</div>' if sub else "") + "</div>")
+    # prijsbewegingen (zoals de v1-analyse: gem. TP% vs gem. SL%)
+    win_pct = ([(t["exit"] - t["entry"]) / t["entry"] * 100 for t in wins]
+               if wins else [])
+    loss_pct = ([(t["exit"] - t["entry"]) / t["entry"] * 100 for t in losses]
+                if losses else [])
+    avg_tp_pct = sum(win_pct) / len(win_pct) if win_pct else 0.0
+    avg_sl_pct = sum(loss_pct) / len(loss_pct) if loss_pct else 0.0
+    expectancy = realized / len(trades) if trades else None
+
     total = st["equity"] + unreal_total
     tiles = (
         stat("Equity (incl. open)", f"€{total:.2f}",
              "up" if total > st["start_equity"] else
              ("down" if total < st["start_equity"] else ""),
-             f"start €{st['start_equity']:.2f}") +
+             f"{(total / st['start_equity'] - 1):+.2%} sinds start") +
         stat("Gerealiseerd", f"{realized:+.2f} EUR",
              "up" if realized > 0 else ("down" if realized < 0 else ""),
-             f"open {unreal_total:+.2f} EUR" if st["positions"] else "") +
+             (f"open {unreal_total:+.2f} EUR · " if st["positions"] else "")
+             + f"waarvan €{fees_total:.2f} fees") +
         stat("Max drawdown", f"{mdd:.1%}") +
-        stat("Fees betaald", f"€{fees_total:.2f}") +
+        stat("Expectancy",
+             f"{expectancy:+.2f} EUR" if expectancy is not None else "—",
+             ("up" if expectancy and expectancy > 0 else
+              ("down" if expectancy and expectancy < 0 else "")),
+             f"per trade · gem. {sum(rs) / len(rs):+.2f}R" if rs else "") +
         stat("Trades", f"{len(trades)}",
              sub=f"{len(wins)} winst · {len(losses)} verlies") +
         stat("Winrate", f"{winrate:.0%}" if winrate is not None else "—",
-             sub=(f"break-even bij {be_winrate:.0%}" if be_winrate else "")) +
+             sub=(f"nodig voor break-even: {be_winrate:.0%}"
+                  if be_winrate else "")) +
         stat("Profit factor", "∞" if pf == float("inf") else f"{pf:.2f}",
-             sub="doel &gt; 1.3") +
+             sub="doel &gt; 1.3 · &lt; 1 = verliesgevend") +
+        stat("Payoff-ratio", f"{payoff:.2f}" if payoff > 0 else "—",
+             sub=(f"TP {avg_tp_pct:+.2f}% vs SL {avg_sl_pct:+.2f}%"
+                  if trades else "")) +
         stat("Gem. win / verlies",
              f"{avg_w:+.2f}R / {avg_l:+.2f}R" if trades else "—",
              sub="verlies hoort ≥ −1.4R te blijven") +
-        stat("Gem. R", f"{sum(rs) / len(rs):+.2f}R" if rs else "—") +
         stat("Looptijd", f"{days:.1f} dagen",
              sub=f"~{len(trades) / (days / 30):.1f} trades/maand"
                  if trades and days >= 3 else "") +
@@ -323,6 +429,53 @@ def render(st: dict | None) -> str:
         pending_note = (f'<div class="meta" style="margin-top:8px">⏳ wacht op '
                         f'fill bij volgende bar-open: {syms}</div>')
 
+    # kerncijfers-tabel (metric / waarde / toelichting), zoals de v1-analyse
+    n_tp = sum(1 for t in trades if t["reason"] == "take_profit")
+    n_sl = sum(1 for t in trades if t["reason"] in ("stop", "gap_stop"))
+    n_other = len(trades) - n_tp - n_sl
+    gross_pl = realized + fees_total
+    fee_share = (f"{fees_total / (fees_total + loss_sum):.0%} van het totale "
+                 "verlies" if (fees_total + loss_sum) > 0 else "—")
+    cds = [(m, cooldown_left_h(st, m)) for m in st["markets"]]
+    cds = [(m, hh) for m, hh in cds if hh > 0]
+    check_sum = sum(t["pnl"] for t in st["trades"])
+    valid = abs(check_sum - realized) < 0.01
+
+    def krow(metric: str, value: str, note: str) -> str:
+        return (f"<tr><td>{metric}</td><td class='num'>{value}</td>"
+                f"<td class='note'>{note}</td></tr>")
+
+    kern_rows = (
+        krow("Trades (TP / SL / overig)", f"{len(trades)} ({n_tp} / {n_sl} / "
+             f"{n_other})", "overig = crash-interceptor, time-stop, trailing") +
+        krow("Gem. take-profit", f"{avg_tp_pct:+.2f}%",
+             f"≈ {win_sum / len(wins):+.2f} EUR netto per winnende trade"
+             if wins else "nog geen winnaars") +
+        krow("Gem. stop-loss", f"{avg_sl_pct:+.2f}%",
+             f"≈ {-loss_sum / len(losses):+.2f} EUR netto per verliezende trade"
+             if losses else "nog geen verliezers") +
+        krow("Bruto P/L (vóór fees)", f"{gross_pl:+.2f} EUR",
+             "positief + netto negatief = de kosten zijn het probleem; "
+             "beide negatief = de strategie zelf") +
+        krow("Fees (gesloten trades)", f"−€{fees_total:.2f}", fee_share) +
+        krow("Open posities",
+             f"{len(st['positions'])}"
+             + (f" ({underwater} onder water)" if st["positions"] else ""),
+             f"ongerealiseerd {unreal_total:+.2f} EUR"
+             if st["positions"] else "de gate wacht op een betaalbare setup") +
+        krow("Max drawdown", f"−{mdd:.2%}",
+             "op de gerealiseerde equity-curve") +
+        krow("Cooldowns actief",
+             ", ".join(f"{m} ({hh:.0f}u)" for m, hh in cds) if cds else "geen",
+             f"na een verlies-exit is een markt {COOLDOWN_BARS} bars "
+             "geblokkeerd") +
+        krow("Cost-gate", "≤ 0.30R kosten per trade",
+             "weigert setups waar fees+slippage &gt; 30% van het risico opeten "
+             "— dé les uit de v1-analyse") +
+        krow("Validatie", "✓ klopt" if valid else "✗ AFWIJKING",
+             f"som van alle trade-P/L = {check_sum:+.4f} = gerealiseerd "
+             f"{realized:+.4f}" + ("" if valid else " — meld dit!")))
+
     now = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
     return f"""<!doctype html>
 <html lang="nl"><head><meta charset="utf-8">
@@ -363,6 +516,7 @@ tr:last-child td {{ border-bottom: none; }}
 .num {{ font-variant-numeric: tabular-nums; text-align: right; }}
 th.num {{ text-align: right; }}
 .up {{ color: var(--up); }} .down {{ color: var(--down); }}
+.note {{ color: var(--muted); font-size: 12px; }}
 .empty {{ color: var(--muted); text-align: center; padding: 14px; }}
 .log {{ font: 12px/1.7 ui-monospace, monospace; color: var(--ink-2);
         max-height: 320px; overflow-y: auto; }}
@@ -374,6 +528,13 @@ elke 60&nbsp;s</div>
 <div class="tiles">{tiles}</div>
 <h2>Equity (gerealiseerd, per gesloten trade)</h2>
 <div class="card">{svg_equity(st)}</div>
+<h2>Equity-verloop (per bar, incl. open posities)</h2>
+<div class="card">{svg_snapshots(st)}
+<div class="meta" style="margin-top:8px">Elk punt is de bar-close: cash +
+open posities tegen marktwaarde. Dit is de curve die dips van open trades
+laat zien die de gerealiseerde curve verbergt.</div></div>
+<h2>Netto P&amp;L per symbool</h2>
+<div class="card">{svg_symbol_bars(trades)}</div>
 <h2>Open posities</h2>
 <div class="card"><table>
 <tr><th>Markt</th><th class="num">Aantal</th><th class="num">Entry</th>
@@ -401,10 +562,16 @@ reden per geval.</div></div>
 <th class="num">Entry</th><th class="num">Exit</th><th class="num">Fees</th>
 <th class="num">R</th><th class="num">P&amp;L</th></tr>
 {trade_rows}</table></div>
+<h2>Alle kerncijfers</h2>
+<div class="card"><table>
+<tr><th>Metric</th><th class="num">Waarde</th><th>Toelichting</th></tr>
+{kern_rows}</table></div>
 <h2>Logboek (recentste eerst)</h2>
 <div class="card log">{log_rows or '<div class="empty">nog leeg</div>'}</div>
-<div class="disclaimer">⚠️ Educatief — papieren resultaten voorspellen geen
-toekomstige winst. Dit dashboard kan niets kopen of verkopen.</div>
+<div class="disclaimer">Bron: paper_state_v2.json + paper_log_v2.txt ·
+validatie som(P/L) = gerealiseerd: {"✓" if valid else "✗"}<br>
+⚠️ Educatief — papieren resultaten voorspellen geen toekomstige winst.
+Dit dashboard kan niets kopen of verkopen.</div>
 </body></html>"""
 
 

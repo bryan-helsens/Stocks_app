@@ -260,6 +260,19 @@ def run_once(st: dict) -> None:
             process_bar(st, cfg, sym, candles[: idx + 1], regime, bar_idx,
                         gate, riskm, manager)
         st["last_ts"] = ts
+
+        # snapshot: equity + open posities mark-to-market op de bar-close
+        total = st["equity"]
+        for sym, p in st["positions"].items():
+            idx = ts_index.get(sym, {}).get(ts)
+            if idx is not None:
+                total += p.get("realized", 0.0) + net_sell(
+                    series[sym][idx].close, p["qty"], p["entry"],
+                    st["fee_side_pct"])
+        snaps = st.setdefault("snapshots", [])
+        snaps.append([ts, round(total, 4)])
+        if len(snaps) > 5000:                     # ~200 dagen op 1h: uitdunnen
+            st["snapshots"] = snaps[::2]
     save_state(st)
 
 
@@ -305,6 +318,7 @@ def init_state(args: argparse.Namespace) -> dict:
         "equity": args.equity,
         "last_ts": 0.0,
         "positions": {}, "pending": {}, "cooldown": {}, "trades": [],
+        "snapshots": [],
     }
     # vers beginnen: geen backfill — start bij de op één na laatste dichte bar,
     # zodat de eerste run meteen één bar verwerkt
