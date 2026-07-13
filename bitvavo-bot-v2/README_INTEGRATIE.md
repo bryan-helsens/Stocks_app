@@ -210,3 +210,42 @@ dat te verruimen — allebei verlagen ze de kosten, niet de lat:
 python3 backtest.py --interval 1h --days 120 --maker
 python3 backtest.py --interval 4h --days 240
 ```
+
+## Zo draai je v2 met nepgeld (`paper_trader_v2.py`)
+
+Standalone paper-trader: gebruikt alleen publieke Bitvavo-marktdata
+(geen API-keys, echt geld kan onmogelijk bewegen) en houdt zijn eigen
+portefeuille bij in `paper_state_v2.json` + logboek `paper_log_v2.txt`.
+Je hoeft je bestaande bot dus niet aan te passen.
+
+```bash
+cd ~/Bot-bitvavo
+
+# 1) eerste run: legt de instellingen vast (1h, maker-fees, €100)
+python3 paper_trader_v2.py --once --maker
+
+# 2) elk uur automatisch draaien via cron:
+crontab -e
+# voeg deze regel toe (minuut 1: de 1h-candle van het vorige uur is dan dicht):
+# 1 * * * * cd /home/debian/Bot-bitvavo && /usr/bin/python3 paper_trader_v2.py --once >> paper_cron.log 2>&1
+
+# 3) kijken hoe het gaat:
+python3 paper_trader_v2.py --status
+tail -20 paper_log_v2.txt
+```
+
+Wat je in het log gaat zien:
+- `SIGNAAL`/`KOOP`/`SLUIT`/`TP1`/`STOP↑` — de trades zelf, met R-multiple
+- `bijna …: score XX geweigerd` — echte dips die door een kwaliteits- of
+  kostenfilter zijn afgewezen (leerzaam: dáár zie je wat de gate tegenhoudt)
+- **wekenlang stilte is normaal** — verwacht grofweg één trade per maand;
+  de gate weigert alles wat na kosten geen positieve verwachting heeft
+
+Rode vlaggen om te melden: een verlies dieper dan ±−1.4R (dan is de echte
+slippage groter dan de 0.35% die we gemeten hebben), of ineens dagelijkse
+trades (dan klopt er iets niet).
+
+Instellingen worden bij de EERSTE run vastgelegd en daarna genegeerd,
+zodat de meting consistent blijft. Opnieuw beginnen: `--reset`.
+Geen cron maar één proces: `python3 paper_trader_v2.py --loop` (bv. in
+`screen`/`tmux`), die wordt vanzelf elke bar wakker.

@@ -180,11 +180,10 @@ def run_v2(series: dict[str, list[Candle]], btc: list[Candle],
             if sym in pending and sym not in positions:
                 plan = riskm.plan(sym, equity, pending.pop(sym), price=bar.open)
                 if plan:
-                    fee_in = plan.entry * plan.quantity * FEE_SIDE_PCT / 100.0
+                    # koop-fee zit al in _sell() (beide zijden) — hier niets aftrekken
                     positions[sym] = OpenPos(sym, plan.entry, plan.stop,
                                              list(plan.tp_levels), plan.quantity,
                                              plan.entry - plan.stop)
-                    equity -= fee_in           # koop-fee direct verrekend
             pending.pop(sym, None)
 
             # ---- open positie beheren --------------------------------------
@@ -310,7 +309,7 @@ def run_v1(series: dict[str, list[Candle]], start_equity: float = 100.0) -> Resu
                     tp = entry * (1 + 0.0245)
                     stake = equity * 0.12      # v1 zette ~€11.4 per trade op €95
                     qty = stake / entry
-                    equity -= entry * qty * FEE_SIDE_PCT / 100.0
+                    # koop-fee zit al in _sell() (beide zijden) — niet dubbel tellen
                     positions[sym] = OpenPos(sym, entry, stop, [(tp, 1.0)], qty,
                                              entry - stop)
         res.equity_curve.append(equity)
