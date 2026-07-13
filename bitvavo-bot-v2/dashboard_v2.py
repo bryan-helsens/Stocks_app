@@ -17,6 +17,7 @@ import html
 import json
 import os
 import time
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -95,11 +96,82 @@ def cooldown_left_h(st: dict, sym: str) -> float:
     return max(0.0, left)
 
 
-try:                                    # cooldown-lengte uit de strategie zelf
-    from rsi_dip_buyer_v2 import StrategyConfig as _SC
-    COOLDOWN_BARS = _SC().cooldown_bars_after_stop
+try:                                    # strategie-module voor de coin-pagina
+    from rsi_dip_buyer_v2 import (Candle, CrashGuard, EntryGate, MarketRegime,
+                                  StrategyConfig, atr, ema, rsi)
+    COOLDOWN_BARS = StrategyConfig().cooldown_bars_after_stop
+    HAVE_STRATEGY = True
 except Exception:
     COOLDOWN_BARS = 48
+    HAVE_STRATEGY = False
+
+_candle_cache: dict[tuple[str, str], tuple[float, list]] = {}
+MS_PER = {"1h": 3_600_000, "2h": 7_200_000, "4h": 14_400_000}
+
+
+def fetch_candles(market: str, interval: str, limit: int = 400) -> list:
+    """Afgesloten candles via de publieke API, 4 min gecachet."""
+    key, now = (market, interval), time.time()
+    hit = _candle_cache.get(key)
+    if hit and now - hit[0] < 240:
+        return hit[1]
+    url = (f"https://api.bitvavo.com/v2/{market}/candles"
+           f"?interval={interval}&limit={limit}")
+    with urllib.request.urlopen(url, timeout=10) as r:
+        rows = json.loads(r.read())
+    rows.sort(key=lambda x: x[0])
+    ms = MS_PER.get(interval, 3_600_000)
+    candles = [Candle(r0[0] / 1000, float(r0[1]), float(r0[2]),
+                      float(r0[3]), float(r0[4]), float(r0[5]))
+               for r0 in rows if r0[0] + ms <= now * 1000]
+    _candle_cache[key] = (now, candles)
+    return candles
+
+
+STYLE = """
+:root {
+  --page: #0d0d0d; --surface: #1a1a19; --border: rgba(255,255,255,0.10);
+  --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --baseline: #383835; --series: #3987e5;
+  --up: #0ca30c; --down: #d03b3b;
+}
+* { box-sizing: border-box; margin: 0; }
+body { background: var(--page); color: var(--ink-2);
+       font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+       padding: 20px; max-width: 960px; margin: 0 auto; }
+h1 { color: var(--ink); font-size: 18px; }
+h2 { color: var(--ink); font-size: 14px; margin: 24px 0 8px; }
+a { color: var(--series); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.meta { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+          gap: 8px; margin-bottom: 16px; }
+.tile { background: var(--surface); border: 1px solid var(--border);
+         border-radius: 8px; padding: 10px 12px; }
+.tile .lbl { font-size: 11px; color: var(--muted); }
+.tile .val { font-size: 18px; color: var(--ink); margin-top: 2px; }
+.tile .sub { font-size: 12px; color: var(--muted); }
+.card { background: var(--surface); border: 1px solid var(--border);
+         border-radius: 8px; padding: 12px; overflow-x: auto; }
+svg { width: 100%; height: auto; display: block; }
+.axis { fill: var(--muted); font-size: 11px;
+         font-family: system-ui, sans-serif; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; color: var(--muted); font-size: 11px;
+      font-weight: 500; padding: 4px 8px; border-bottom: 1px solid var(--baseline); }
+td { padding: 5px 8px; border-bottom: 1px solid var(--grid); }
+tr:last-child td { border-bottom: none; }
+.num { font-variant-numeric: tabular-nums; text-align: right; }
+th.num { text-align: right; }
+.up { color: var(--up); } .down { color: var(--down); }
+.note { color: var(--muted); font-size: 12px; }
+.empty { color: var(--muted); text-align: center; padding: 14px; }
+.log { font: 12px/1.7 ui-monospace, monospace; color: var(--ink-2);
+        max-height: 320px; overflow-y: auto; }
+.disclaimer { color: var(--muted); font-size: 11px; margin-top: 16px; }
+.verdict { font: 13px/1.7 ui-monospace, monospace; }
+.verdict .ok { color: var(--up); } .verdict .no { color: var(--down); }
+"""
 
 
 def fmt_ts(ts: float) -> str:
@@ -267,6 +339,199 @@ def pnl_cell(val: float, suffix: str = " EUR") -> str:
     return f'<td class="num">0.00{suffix}</td>'
 
 
+def svg_price(st: dict, sym: str, candles: list) -> str:
+    """Koerslijn met entry/exit-markers en (open) stop-niveau."""
+    candles = candles[-300:]
+    if len(candles) < 2:
+        return '<div class="empty">te weinig koersdata</div>'
+    w, h, pad_l, pad_r, pad_t, pad_b = 860, 280, 64, 16, 14, 26
+    x0, x1 = candles[0].ts, candles[-1].ts
+    pos = st["positions"].get(sym)
+    lows = [c.low for c in candles] + ([pos["stop"]] if pos else [])
+    highs = [c.high for c in candles]
+    lo, hi = min(lows), max(highs)
+    span = max(hi - lo, 1e-9)
+    lo, hi = lo - span * 0.08, hi + span * 0.08
+
+    def X(t: float) -> float:
+        return pad_l + (w - pad_l - pad_r) * ((t - x0) / max(x1 - x0, 1))
+
+    def Y(v: float) -> float:
+        return pad_t + (h - pad_t - pad_b) * (1 - (v - lo) / (hi - lo))
+
+    d = "M " + " L ".join(f"{X(c.ts):.1f} {Y(c.close):.1f}" for c in candles)
+    grid, labels = [], []
+    for frac in (0.0, 0.5, 1.0):
+        v = lo + (hi - lo) * frac
+        grid.append(f'<line x1="{pad_l}" y1="{Y(v):.1f}" x2="{w - pad_r}" '
+                    f'y2="{Y(v):.1f}" stroke="var(--grid)" stroke-width="1"/>')
+        labels.append(f'<text x="{pad_l - 8}" y="{Y(v) + 4:.1f}" '
+                      f'text-anchor="end" class="axis">€{v:.4g}</text>')
+        t = x0 + (x1 - x0) * frac
+        anchor = "start" if frac == 0 else ("end" if frac == 1 else "middle")
+        labels.append(f'<text x="{X(t):.1f}" y="{h - 8}" text-anchor="{anchor}" '
+                      f'class="axis">{fmt_ts(t)}</text>')
+
+    marks = []
+    for t in st["trades"]:
+        if t["sym"] != sym:
+            continue
+        if x0 <= t["opened"] <= x1:
+            marks.append(f'<circle cx="{X(t["opened"]):.1f}" '
+                         f'cy="{Y(t["entry"]):.1f}" r="4" fill="none" '
+                         'stroke="var(--ink-2)" stroke-width="2">'
+                         f'<title>entry @ €{t["entry"]:.4f}</title></circle>')
+        if x0 <= t["closed"] <= x1:
+            col = "var(--up)" if t["pnl"] > 0 else "var(--down)"
+            marks.append(f'<circle cx="{X(t["closed"]):.1f}" '
+                         f'cy="{Y(t["exit"]):.1f}" r="5" fill="{col}" '
+                         'stroke="var(--surface)" stroke-width="2">'
+                         f'<title>{t["reason"]} {t["r"]:+.2f}R @ '
+                         f'€{t["exit"]:.4f}</title></circle>')
+    if pos:
+        ys = Y(pos["stop"])
+        marks.append(f'<line x1="{pad_l}" y1="{ys:.1f}" x2="{w - pad_r}" '
+                     f'y2="{ys:.1f}" stroke="var(--down)" stroke-width="1" '
+                     'stroke-dasharray="5 4"/>'
+                     f'<text x="{w - pad_r}" y="{ys - 5:.1f}" text-anchor="end" '
+                     f'class="axis" fill="var(--down)">stop €{pos["stop"]:.4f}'
+                     '</text>')
+        marks.append(f'<circle cx="{X(max(x0, pos["opened"])):.1f}" '
+                     f'cy="{Y(pos["entry"]):.1f}" r="5" fill="var(--series)" '
+                     'stroke="var(--surface)" stroke-width="2">'
+                     f'<title>open positie @ €{pos["entry"]:.4f}</title></circle>')
+    legend = ('<div class="meta" style="margin-top:8px">○ entry · '
+              '<span class="up">●</span>/<span class="down">●</span> exit '
+              '(winst/verlies) · <span style="color:var(--series)">●</span> '
+              'open positie · rode stippellijn = actuele stop</div>')
+    return (f'<svg viewBox="0 0 {w} {h}" role="img" '
+            f'aria-label="Koersverloop {html.escape(sym)} met trades">'
+            + "".join(grid)
+            + f'<path d="{d}" fill="none" stroke="var(--series)" '
+              'stroke-width="2" stroke-linejoin="round"/>'
+            + "".join(marks) + "".join(labels) + "</svg>") + legend
+
+
+def render_coin(st: dict, sym: str) -> str:
+    """Detailpagina voor één markt."""
+    back = '<div class="meta"><a href="/">← terug naar overzicht</a></div>'
+    if not HAVE_STRATEGY:
+        return (f"<!doctype html><style>{STYLE}</style><body>{back}"
+                "<h1>rsi_dip_buyer_v2.py niet gevonden</h1>"
+                "<p>Zet dashboard_v2.py in dezelfde map als de strategie."
+                "</p></body>")
+    try:
+        candles = fetch_candles(sym, st["interval"])
+        btc = (candles if sym == "BTC-EUR"
+               else fetch_candles("BTC-EUR", st["interval"]))
+    except Exception as e:
+        return (f"<!doctype html><style>{STYLE}</style><body>{back}"
+                f"<h1>{html.escape(sym)}</h1><div class='card empty'>"
+                f"koersdata ophalen mislukt: {html.escape(str(e))}</div></body>")
+
+    cfg = StrategyConfig(fee_pct_round_trip=2 * st["fee_side_pct"])
+    regime = CrashGuard(cfg).market_regime(btc[-cfg.market_window_bars - 2:])
+    dec = EntryGate(cfg).evaluate(sym, candles, regime=regime)
+
+    closes = [c.close for c in candles]
+    price = closes[-1]
+    rs = rsi(closes, cfg.rsi_period)
+    ats = atr(candles, cfg.atr_period)
+    e50 = ema(closes, cfg.ema_fast)
+    e200 = ema(closes, cfg.ema_slow)
+    atr_pct = 100.0 * ats[-1] / price if ats else 0.0
+    uptrend = bool(e200) and price > e200[-1] and e50[-1] > e200[-1]
+    min_stop_pct = ((2 * st["fee_side_pct"] + 0.35) / cfg.max_cost_per_risk
+                    if getattr(cfg, "max_cost_per_risk", 0) else 0.0)
+
+    sym_trades = [t for t in st["trades"] if t["sym"] == sym]
+    sym_wins = [t for t in sym_trades if t["pnl"] > 0]
+    pnl_sum = sum(t["pnl"] for t in sym_trades)
+    cd = cooldown_left_h(st, sym)
+    pos = st["positions"].get(sym)
+
+    stat = lambda label, value, cls="", sub="": (  # noqa: E731
+        f'<div class="tile"><div class="lbl">{label}</div>'
+        f'<div class="val {cls}">{value}</div>'
+        + (f'<div class="sub">{sub}</div>' if sub else "") + "</div>")
+    tiles = (
+        stat("Laatste koers", f"€{price:.4g}",
+             sub=f"slot {fmt_ts(candles[-1].ts)}") +
+        stat("RSI (14)", f"{rs[-1]:.0f}" if rs else "—",
+             sub=f"dip-drempel &lt; {cfg.rsi_dip_level:.0f}") +
+        stat("ATR", f"{atr_pct:.2f}%",
+             "" if atr_pct * cfg.stop_atr_mult >= min_stop_pct else "down",
+             sub=f"stop wordt {atr_pct * cfg.stop_atr_mult:.2f}% · gate eist "
+                 f"≥ {min_stop_pct:.2f}%") +
+        stat("Trend", "↑ up" if uptrend else "↓ down",
+             "up" if uptrend else "down",
+             sub="close vs EMA200 én EMA50&gt;EMA200") +
+        stat("BTC-regime", regime.value,
+             "down" if str(regime.value).lower() == "bear" else "") +
+        stat("Cooldown", f"{cd:.0f}u" if cd > 0 else "vrij",
+             "down" if cd > 0 else "") +
+        stat("P&amp;L dit symbool", f"{pnl_sum:+.2f} EUR",
+             "up" if pnl_sum > 0 else ("down" if pnl_sum < 0 else ""),
+             sub=(f"{len(sym_trades)} trades · "
+                  f"{len(sym_wins)}/{len(sym_trades)} winst"
+                  if sym_trades else "nog geen trades")) +
+        stat("Positie", "open" if pos else "geen",
+             "up" if pos else "",
+             sub=(f"entry €{pos['entry']:.4g} · stop €{pos['stop']:.4g}"
+                  if pos else "")))
+
+    verdict_head = ('<span class="ok">✔ KOOP-signaal — wacht op fill bij '
+                    'volgende bar-open</span>' if dec.allowed else
+                    '<span class="no">✘ geen koop op dit moment</span>')
+    verdict_lines = "".join(f"<div>· {html.escape(r)}</div>"
+                            for r in dec.reasons) or "<div>· geen dip actief</div>"
+
+    trade_rows = "".join(
+        f'<tr><td class="num">{fmt_ts(t["closed"])}</td>'
+        f'<td>{html.escape(t["reason"])}</td>'
+        f'<td class="num">€{t["entry"]:.4f}</td>'
+        f'<td class="num">€{t["exit"]:.4f}</td>'
+        f'<td class="num">{"€" + format(t["fees"], ".2f") if "fees" in t else "—"}</td>'
+        f'<td class="num">{t["r"]:+.2f}R</td>{pnl_cell(t["pnl"])}</tr>'
+        for t in sorted(sym_trades, key=lambda x: -x["closed"])) or (
+        "<tr><td colspan='7' class='empty'>nog geen trades op dit symbool"
+        "</td></tr>")
+
+    base = sym.split("-")[0]
+    log_rows = "".join(
+        f"<div>{html.escape(ln)}</div>"
+        for ln in reversed([ln for ln in log_tail(400) if base in ln][-40:]))
+
+    now = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+    return f"""<!doctype html>
+<html lang="nl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="120">
+<title>{html.escape(sym)} — paper-bot</title>
+<style>{STYLE}</style></head><body>
+{back}
+<h1>{html.escape(sym)}</h1>
+<div class="meta">nepgeld · alleen-lezen · bijgewerkt {now}</div>
+<div class="tiles">{tiles}</div>
+<h2>Wat vindt de gate er nú van?</h2>
+<div class="card verdict">{verdict_head}
+<div style="margin-top:8px">score {dec.score:.0f} / drempel
+{cfg.min_quality_score:.0f}</div>{verdict_lines}</div>
+<h2>Koers ({st["interval"]}, laatste {min(len(candles), 300)} bars) met trades</h2>
+<div class="card">{svg_price(st, sym, candles)}</div>
+<h2>Trades op {html.escape(sym)}</h2>
+<div class="card"><table>
+<tr><th class="num">Gesloten</th><th>Reden</th><th class="num">Entry</th>
+<th class="num">Exit</th><th class="num">Fees</th><th class="num">R</th>
+<th class="num">P&amp;L</th></tr>
+{trade_rows}</table></div>
+<h2>Logboek voor {html.escape(base)}</h2>
+<div class="card log">{log_rows or '<div class="empty">nog niets gelogd</div>'}</div>
+<div class="disclaimer">⚠️ Educatief — geen beleggingsadvies. Dit dashboard
+kan niets kopen of verkopen.</div>
+</body></html>"""
+
+
 def render(st: dict | None) -> str:
     if st is None:
         return ("<!doctype html><meta charset='utf-8'>"
@@ -391,8 +656,9 @@ def render(st: dict | None) -> str:
         a = acts.get(m, {})
         cd = cooldown_left_h(st, m)
         pnl_sum = sum(t["pnl"] for t in mt)
+        link = f'<a href="/coin/{html.escape(m)}">{html.escape(m)}</a>'
         mkt_rows.append(
-            f'<tr><td>{html.escape(m)}</td>'
+            f'<tr><td>{link}</td>'
             f'<td class="num">{a.get("bijna", 0)}</td>'
             f'<td class="num">{a.get("signalen", 0)}</td>'
             f'<td class="num">{len(mt)}</td>'
@@ -400,7 +666,7 @@ def render(st: dict | None) -> str:
             f'{pnl_cell(pnl_sum)}'
             f'<td class="num">{(sum(t["r"] for t in mt) / len(mt)):+.2f}R</td>'
             if mt else
-            f'<tr><td>{html.escape(m)}</td>'
+            f'<tr><td>{link}</td>'
             f'<td class="num">{a.get("bijna", 0)}</td>'
             f'<td class="num">{a.get("signalen", 0)}</td>'
             f'<td class="num">0</td><td class="num">—</td>'
@@ -476,52 +742,29 @@ def render(st: dict | None) -> str:
              f"som van alle trade-P/L = {check_sum:+.4f} = gerealiseerd "
              f"{realized:+.4f}" + ("" if valid else " — meld dit!")))
 
+    # Belgische belastingen (educatief) — gerealiseerd resultaat per jaar
+    by_year: dict[int, float] = {}
+    for t in st["trades"]:
+        y = datetime.fromtimestamp(t["closed"], timezone.utc).year
+        by_year[y] = by_year.get(y, 0.0) + t["pnl"]
+    tax_rows = "".join(
+        f"<tr><td class='num'>{y}</td>{pnl_cell(v)}"
+        f"<td class='num'>{'€' + format(v * 0.33, '.2f') if v > 0 else '—'}</td>"
+        f"<td class='note'>"
+        + ("hypothetisch: winst × 33% (+ gemeentebelasting)" if v > 0 else
+           "verlies — als 'diverse inkomsten' 5 jaar verrekenbaar met "
+           "winsten uit dezelfde categorie")
+        + "</td></tr>"
+        for y, v in sorted(by_year.items())) or (
+        "<tr><td colspan='4' class='empty'>nog geen gesloten trades</td></tr>")
+
     now = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
     return f"""<!doctype html>
 <html lang="nl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="60">
 <title>Paper-bot v2</title>
-<style>
-:root {{
-  --page: #0d0d0d; --surface: #1a1a19; --border: rgba(255,255,255,0.10);
-  --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
-  --grid: #2c2c2a; --baseline: #383835; --series: #3987e5;
-  --up: #0ca30c; --down: #d03b3b;
-}}
-* {{ box-sizing: border-box; margin: 0; }}
-body {{ background: var(--page); color: var(--ink-2);
-       font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
-       padding: 20px; max-width: 960px; margin: 0 auto; }}
-h1 {{ color: var(--ink); font-size: 18px; }}
-h2 {{ color: var(--ink); font-size: 14px; margin: 24px 0 8px; }}
-.meta {{ color: var(--muted); font-size: 12px; margin-bottom: 16px; }}
-.tiles {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-          gap: 8px; margin-bottom: 16px; }}
-.tile {{ background: var(--surface); border: 1px solid var(--border);
-         border-radius: 8px; padding: 10px 12px; }}
-.tile .lbl {{ font-size: 11px; color: var(--muted); }}
-.tile .val {{ font-size: 18px; color: var(--ink); margin-top: 2px; }}
-.tile .sub {{ font-size: 12px; color: var(--muted); }}
-.card {{ background: var(--surface); border: 1px solid var(--border);
-         border-radius: 8px; padding: 12px; overflow-x: auto; }}
-svg {{ width: 100%; height: auto; display: block; }}
-.axis {{ fill: var(--muted); font-size: 11px;
-         font-family: system-ui, sans-serif; }}
-table {{ width: 100%; border-collapse: collapse; }}
-th {{ text-align: left; color: var(--muted); font-size: 11px;
-      font-weight: 500; padding: 4px 8px; border-bottom: 1px solid var(--baseline); }}
-td {{ padding: 5px 8px; border-bottom: 1px solid var(--grid); }}
-tr:last-child td {{ border-bottom: none; }}
-.num {{ font-variant-numeric: tabular-nums; text-align: right; }}
-th.num {{ text-align: right; }}
-.up {{ color: var(--up); }} .down {{ color: var(--down); }}
-.note {{ color: var(--muted); font-size: 12px; }}
-.empty {{ color: var(--muted); text-align: center; padding: 14px; }}
-.log {{ font: 12px/1.7 ui-monospace, monospace; color: var(--ink-2);
-        max-height: 320px; overflow-y: auto; }}
-.disclaimer {{ color: var(--muted); font-size: 11px; margin-top: 16px; }}
-</style></head><body>
+<style>{STYLE}</style></head><body>
 <h1>Paper-bot v2 — rsi_dip_buyer</h1>
 <div class="meta">nepgeld · alleen-lezen · bijgewerkt {now} · pagina ververst
 elke 60&nbsp;s</div>
@@ -566,6 +809,25 @@ reden per geval.</div></div>
 <div class="card"><table>
 <tr><th>Metric</th><th class="num">Waarde</th><th>Toelichting</th></tr>
 {kern_rows}</table></div>
+<h2>Belgische belastingen (educatief)</h2>
+<div class="card"><table>
+<tr><th class="num">Jaar</th><th class="num">Gerealiseerd resultaat</th>
+<th class="num">Hypothetisch 33%</th><th>Toelichting</th></tr>
+{tax_rows}</table>
+<div class="meta" style="margin-top:10px">
+<b>Dit is nepgeld</b> — er valt dus niets aan te geven. Zou dit echt geld
+zijn, dan kent België grofweg drie regimes voor crypto-meerwaarden:
+<b>goede huisvader</b> (normaal beheer van privévermogen → vrijgesteld),
+<b>speculatief</b> (diverse inkomsten → 33% + gemeentebelasting, aangifte
+vak XV) en <b>beroepsmatig</b> (progressieve tarieven). Een bot die
+frequent en geautomatiseerd handelt wijst doorgaans richting het
+speculatieve regime — daarom rekent de kolom hierboven met 33%.
+Koerswinst op crypto kent geen roerende voorheffing en geen beurstaks
+(TOB); rente uit staking/lending zou wél roerend inkomen zijn (30%).<br><br>
+⚠️ Educatief en indicatief — <b>geen belastingadvies</b>. De kwalificatie
+hangt af van jouw volledige situatie; raadpleeg een accountant of
+belastingadviseur (of vraag een ruling) vóór je met echt geld handelt.
+</div></div>
 <h2>Logboek (recentste eerst)</h2>
 <div class="card log">{log_rows or '<div class="empty">nog leeg</div>'}</div>
 <div class="disclaimer">Bron: paper_state_v2.json + paper_log_v2.txt ·
@@ -577,13 +839,25 @@ Dit dashboard kan niets kopen of verkopen.</div>
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
+        status = 200
         if self.path.startswith("/api/state"):
             body = json.dumps(load_state() or {}).encode()
             ctype = "application/json"
+        elif self.path.startswith("/coin/"):
+            st = load_state()
+            sym = urllib.parse.unquote(self.path[len("/coin/"):]).split("?")[0]
+            if st and sym in st["markets"]:
+                body = render_coin(st, sym).encode()
+            else:
+                status = 404
+                body = (f"<!doctype html><style>{STYLE}</style><body>"
+                        '<div class="meta"><a href="/">← terug</a></div>'
+                        f"<h1>Onbekende markt</h1></body>").encode()
+            ctype = "text/html; charset=utf-8"
         else:
             body = render(load_state()).encode()
             ctype = "text/html; charset=utf-8"
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
