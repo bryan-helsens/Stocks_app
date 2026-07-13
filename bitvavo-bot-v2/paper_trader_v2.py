@@ -80,13 +80,19 @@ def save_state(st: dict) -> None:
     os.replace(tmp, STATE_FILE)
 
 
-def net_sell(price: float, qty: float, entry: float,
-             fee_side_pct: float, slip_pct: float = 0.0) -> float:
-    """Netto P&L van een (deel)verkoop incl. fees op BEIDE zijden + slippage."""
+def sell_breakdown(price: float, qty: float, entry: float, fee_side_pct: float,
+                   slip_pct: float = 0.0) -> tuple[float, float]:
+    """(netto P&L, betaalde fees) van een (deel)verkoop, fees op BEIDE zijden."""
     px = price * (1.0 - slip_pct / 100.0)
     gross = (px - entry) * qty
     fees = (entry * qty + px * qty) * fee_side_pct / 100.0
-    return gross - fees
+    return gross - fees, fees
+
+
+def net_sell(price: float, qty: float, entry: float,
+             fee_side_pct: float, slip_pct: float = 0.0) -> float:
+    """Netto P&L van een (deel)verkoop incl. fees op BEIDE zijden + slippage."""
+    return sell_breakdown(price, qty, entry, fee_side_pct, slip_pct)[0]
 
 
 # --------------------------------------------------------------------------- #
@@ -111,7 +117,7 @@ def process_bar(st: dict, cfg: StrategyConfig, sym: str, window: list[Candle],
                 "orig_qty": plan.quantity, "risk_per_unit": plan.entry - plan.stop,
                 "tp_levels": [[p_, f_] for p_, f_ in plan.tp_levels],
                 "bars_held": 0, "break_even": False, "realized": 0.0,
-                "opened": bar.ts,
+                "fees_paid": 0.0, "opened": bar.ts,
             }
             log(f"KOOP  {sym}: {plan.quantity:.6f} @ €{plan.entry:.4f} "
                 f"(stop €{plan.stop:.4f}, risico €{plan.risk_amount:.2f}, "
@@ -127,13 +133,16 @@ def process_bar(st: dict, cfg: StrategyConfig, sym: str, window: list[Candle],
         risk_amt = pos["risk_per_unit"] * pos["orig_qty"]
 
         def close(fill: float, reason: str, slip: float = 0.0) -> None:
-            pnl = pos["realized"] + net_sell(fill, pos["qty"], pos["entry"],
-                                             fee_side, slip)
+            part_pnl, part_fees = sell_breakdown(fill, pos["qty"], pos["entry"],
+                                                 fee_side, slip)
+            pnl = pos["realized"] + part_pnl
+            fees = pos.get("fees_paid", 0.0) + part_fees
             st["equity"] += pnl
             r = pnl / risk_amt if risk_amt > 0 else 0.0
             st["trades"].append({"sym": sym, "entry": pos["entry"], "exit": fill,
                                  "reason": reason, "r": round(r, 3),
-                                 "pnl": round(pnl, 4), "opened": pos["opened"],
+                                 "pnl": round(pnl, 4), "qty": pos["orig_qty"],
+                                 "fees": round(fees, 4), "opened": pos["opened"],
                                  "closed": bar.ts})
             if pnl < 0:
                 st["cooldown"][sym] = bar_idx
@@ -151,8 +160,10 @@ def process_bar(st: dict, cfg: StrategyConfig, sym: str, window: list[Candle],
         for tp_price, frac in list(pos["tp_levels"]):     # TP's (limit, geen slip)
             if bar.high >= tp_price:
                 part_qty = min(pos["orig_qty"] * frac, pos["qty"])
-                pnl = net_sell(tp_price, part_qty, pos["entry"], fee_side)
+                pnl, part_fees = sell_breakdown(tp_price, part_qty,
+                                                pos["entry"], fee_side)
                 pos["realized"] += pnl
+                pos["fees_paid"] = pos.get("fees_paid", 0.0) + part_fees
                 pos["qty"] -= part_qty
                 pos["tp_levels"].remove([tp_price, frac])
                 if not pos["tp_levels"] or pos["qty"] <= 1e-12:
@@ -162,6 +173,8 @@ def process_bar(st: dict, cfg: StrategyConfig, sym: str, window: list[Candle],
                     st["trades"].append({"sym": sym, "entry": pos["entry"],
                                          "exit": tp_price, "reason": "take_profit",
                                          "r": round(r, 3), "pnl": round(total, 4),
+                                         "qty": pos["orig_qty"],
+                                         "fees": round(pos.get("fees_paid", 0.0), 4),
                                          "opened": pos["opened"], "closed": bar.ts})
                     del positions[sym]
                     log(f"SLUIT {sym}: take_profit @ €{tp_price:.4f} → "

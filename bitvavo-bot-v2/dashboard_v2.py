@@ -56,6 +56,52 @@ def log_tail(n: int = 30) -> list[str]:
         return [ln.rstrip() for ln in f.readlines()[-n:]]
 
 
+def gate_activity() -> dict[str, dict[str, int]]:
+    """Telt per markt de gate-gebeurtenissen uit het volledige logboek."""
+    acts: dict[str, dict[str, int]] = {}
+    if not os.path.exists(LOG_FILE):
+        return acts
+    with open(LOG_FILE) as f:
+        for ln in f:
+            parts = ln.split()
+            if len(parts) < 4:
+                continue
+            kind, sym = parts[2].rstrip(":"), parts[3].rstrip(":")
+            key = {"SIGNAAL": "signalen", "KOOP": "koop",
+                   "bijna": "bijna", "SLUIT": "sluit"}.get(kind)
+            if key and "-" in sym:
+                acts.setdefault(sym, {"bijna": 0, "signalen": 0,
+                                      "koop": 0, "sluit": 0})[key] += 1
+    return acts
+
+
+def max_drawdown(pts: list[tuple[float, float]]) -> float:
+    peak, mdd = pts[0][1], 0.0
+    for _, v in pts:
+        peak = max(peak, v)
+        if peak > 0:
+            mdd = max(mdd, (peak - v) / peak)
+    return mdd
+
+
+def cooldown_left_h(st: dict, sym: str) -> float:
+    """Resterende cooldown-uren voor een markt, 0 als vrij."""
+    last = st.get("cooldown", {}).get(sym)
+    if last is None:
+        return 0.0
+    sec_per = {"1h": 3600, "2h": 7200, "4h": 14400}.get(st["interval"], 3600)
+    bars_gone = time.time() / sec_per - last
+    left = (COOLDOWN_BARS - bars_gone) * sec_per / 3600
+    return max(0.0, left)
+
+
+try:                                    # cooldown-lengte uit de strategie zelf
+    from rsi_dip_buyer_v2 import StrategyConfig as _SC
+    COOLDOWN_BARS = _SC().cooldown_bars_after_stop
+except Exception:
+    COOLDOWN_BARS = 48
+
+
 def fmt_ts(ts: float) -> str:
     return datetime.fromtimestamp(ts, timezone.utc).strftime("%d/%m %H:%M")
 
@@ -178,31 +224,104 @@ def render(st: dict | None) -> str:
         f'<td>{html.escape(t["reason"])}</td>'
         f'<td class="num">€{t["entry"]:.4f}</td>'
         f'<td class="num">€{t["exit"]:.4f}</td>'
+        f'<td class="num">{"€" + format(t["fees"], ".2f") if "fees" in t else "—"}</td>'
         f'<td class="num">{t["r"]:+.2f}R</td>{pnl_cell(t["pnl"])}</tr>'
-        for t in trades) or ("<tr><td colspan='7' class='empty'>nog geen "
+        for t in trades) or ("<tr><td colspan='8' class='empty'>nog geen "
                              "afgesloten trades</td></tr>")
 
     log_rows = "".join(f"<div>{html.escape(ln)}</div>"
                        for ln in reversed(log_tail()))
 
     rs = [t["r"] for t in trades]
-    stat = lambda label, value, cls="": (  # noqa: E731
+    losses = [t for t in trades if t["pnl"] <= 0]
+    win_sum = sum(t["pnl"] for t in wins)
+    loss_sum = abs(sum(t["pnl"] for t in losses))
+    pf = win_sum / loss_sum if loss_sum > 0 else (float("inf") if wins else 0.0)
+    avg_w = (sum(t["r"] for t in wins) / len(wins)) if wins else 0.0
+    avg_l = (sum(t["r"] for t in losses) / len(losses)) if losses else 0.0
+    payoff = avg_w / abs(avg_l) if avg_l < 0 else 0.0
+    be_winrate = 1.0 / (1.0 + payoff) if payoff > 0 else None
+    winrate = len(wins) / len(trades) if trades else None
+    fees_total = sum(t.get("fees", 0.0) for t in trades)
+    mdd = max_drawdown(equity_points(st))
+
+    stat = lambda label, value, cls="", sub="": (  # noqa: E731
         f'<div class="tile"><div class="lbl">{label}</div>'
-        f'<div class="val {cls}">{value}</div></div>')
+        f'<div class="val {cls}">{value}</div>'
+        + (f'<div class="sub">{sub}</div>' if sub else "") + "</div>")
     total = st["equity"] + unreal_total
     tiles = (
         stat("Equity (incl. open)", f"€{total:.2f}",
              "up" if total > st["start_equity"] else
-             ("down" if total < st["start_equity"] else "")) +
+             ("down" if total < st["start_equity"] else ""),
+             f"start €{st['start_equity']:.2f}") +
         stat("Gerealiseerd", f"{realized:+.2f} EUR",
-             "up" if realized > 0 else ("down" if realized < 0 else "")) +
-        stat("Trades", f"{len(trades)} <span class='sub'>({len(wins)} winst)"
-                       "</span>") +
+             "up" if realized > 0 else ("down" if realized < 0 else ""),
+             f"open {unreal_total:+.2f} EUR" if st["positions"] else "") +
+        stat("Max drawdown", f"{mdd:.1%}") +
+        stat("Fees betaald", f"€{fees_total:.2f}") +
+        stat("Trades", f"{len(trades)}",
+             sub=f"{len(wins)} winst · {len(losses)} verlies") +
+        stat("Winrate", f"{winrate:.0%}" if winrate is not None else "—",
+             sub=(f"break-even bij {be_winrate:.0%}" if be_winrate else "")) +
+        stat("Profit factor", "∞" if pf == float("inf") else f"{pf:.2f}",
+             sub="doel &gt; 1.3") +
+        stat("Gem. win / verlies",
+             f"{avg_w:+.2f}R / {avg_l:+.2f}R" if trades else "—",
+             sub="verlies hoort ≥ −1.4R te blijven") +
         stat("Gem. R", f"{sum(rs) / len(rs):+.2f}R" if rs else "—") +
-        stat("Looptijd", f"{days:.1f} dagen") +
-        stat("Instellingen", f"{st['interval']} · fee {st['fee_side_pct']}%"
-                             f"/zijde <span class='sub'>· {len(st['markets'])}"
-                             " markten</span>"))
+        stat("Looptijd", f"{days:.1f} dagen",
+             sub=f"~{len(trades) / (days / 30):.1f} trades/maand"
+                 if trades and days >= 3 else "") +
+        stat("Instellingen", f"{st['interval']} · {st['fee_side_pct']}%/zijde",
+             sub=f"{len(st['markets'])} markten · max risico 0.75%/trade"))
+
+    # per markt: gate-activiteit + resultaat + cooldown
+    acts = gate_activity()
+    mkt_rows = []
+    for m in st["markets"]:
+        mt = [t for t in trades if t["sym"] == m]
+        mw = [t for t in mt if t["pnl"] > 0]
+        a = acts.get(m, {})
+        cd = cooldown_left_h(st, m)
+        pnl_sum = sum(t["pnl"] for t in mt)
+        mkt_rows.append(
+            f'<tr><td>{html.escape(m)}</td>'
+            f'<td class="num">{a.get("bijna", 0)}</td>'
+            f'<td class="num">{a.get("signalen", 0)}</td>'
+            f'<td class="num">{len(mt)}</td>'
+            f'<td class="num">{(len(mw) / len(mt)):.0%}</td>'
+            f'{pnl_cell(pnl_sum)}'
+            f'<td class="num">{(sum(t["r"] for t in mt) / len(mt)):+.2f}R</td>'
+            if mt else
+            f'<tr><td>{html.escape(m)}</td>'
+            f'<td class="num">{a.get("bijna", 0)}</td>'
+            f'<td class="num">{a.get("signalen", 0)}</td>'
+            f'<td class="num">0</td><td class="num">—</td>'
+            f'<td class="num">—</td><td class="num">—</td>')
+        mkt_rows[-1] += (f'<td class="num">{cd:.0f}u</td></tr>' if cd > 0
+                         else '<td class="num">—</td></tr>')
+    mkt_table = "".join(mkt_rows)
+
+    # exits per reden
+    reasons: dict[str, list[dict]] = {}
+    for t in trades:
+        reasons.setdefault(t["reason"], []).append(t)
+    reason_rows = "".join(
+        f'<tr><td>{html.escape(rn)}</td>'
+        f'<td class="num">{len(ts_)}</td>'
+        f'{pnl_cell(sum(t["pnl"] for t in ts_))}'
+        f'<td class="num">{sum(t["r"] for t in ts_) / len(ts_):+.2f}R</td></tr>'
+        for rn, ts_ in sorted(reasons.items(),
+                              key=lambda kv: -len(kv[1]))) or (
+        "<tr><td colspan='4' class='empty'>nog geen exits</td></tr>")
+
+    pending_note = ""
+    if st.get("pending"):
+        syms = ", ".join(f"{html.escape(s)} (stop €{p['stop_price']:.4f})"
+                         for s, p in st["pending"].items())
+        pending_note = (f'<div class="meta" style="margin-top:8px">⏳ wacht op '
+                        f'fill bij volgende bar-open: {syms}</div>')
 
     now = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
     return f"""<!doctype html>
@@ -260,12 +379,27 @@ elke 60&nbsp;s</div>
 <tr><th>Markt</th><th class="num">Aantal</th><th class="num">Entry</th>
 <th class="num">Stop</th><th class="num">Geopend</th><th class="num">Koers</th>
 <th class="num">Ongerealiseerd</th><th class="num">R</th></tr>
-{pos_table}</table></div>
+{pos_table}</table>{pending_note}</div>
+<h2>Per markt — gate-activiteit &amp; resultaat</h2>
+<div class="card"><table>
+<tr><th>Markt</th><th class="num">bijna*</th><th class="num">Signalen</th>
+<th class="num">Trades</th><th class="num">Winrate</th>
+<th class="num">P&amp;L</th><th class="num">Gem. R</th>
+<th class="num">Cooldown</th></tr>
+{mkt_table}</table>
+<div class="meta" style="margin-top:8px">* "bijna" = echte dip in uptrend die
+door een kwaliteits- of kostenfilter is geweigerd — zie het logboek voor de
+reden per geval.</div></div>
+<h2>Exits per reden</h2>
+<div class="card"><table>
+<tr><th>Reden</th><th class="num">Aantal</th><th class="num">P&amp;L</th>
+<th class="num">Gem. R</th></tr>
+{reason_rows}</table></div>
 <h2>Afgesloten trades</h2>
 <div class="card"><table>
 <tr><th class="num">Gesloten</th><th>Markt</th><th>Reden</th>
-<th class="num">Entry</th><th class="num">Exit</th><th class="num">R</th>
-<th class="num">P&amp;L</th></tr>
+<th class="num">Entry</th><th class="num">Exit</th><th class="num">Fees</th>
+<th class="num">R</th><th class="num">P&amp;L</th></tr>
 {trade_rows}</table></div>
 <h2>Logboek (recentste eerst)</h2>
 <div class="card log">{log_rows or '<div class="empty">nog leeg</div>'}</div>
