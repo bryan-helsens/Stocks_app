@@ -106,7 +106,8 @@ except Exception:
     HAVE_STRATEGY = False
 
 _candle_cache: dict[tuple[str, str], tuple[float, list]] = {}
-MS_PER = {"1h": 3_600_000, "2h": 7_200_000, "4h": 14_400_000}
+MS_PER = {"1h": 3_600_000, "2h": 7_200_000, "4h": 14_400_000,
+          "1d": 86_400_000}
 
 
 def fetch_candles(market: str, interval: str, limit: int = 400) -> list:
@@ -771,6 +772,23 @@ def render(st: dict | None) -> str:
                   f'verwerkte bar {fmt_ts(st["last_ts"])}. Check op de VPS: '
                   '<code>systemctl status paperbot-v2</code> en '
                   '<code>journalctl -u paperbot-v2 -n 30</code></div>')
+
+    # her-test-signaal: BTC op een 90-dagen-high → trendende markt →
+    # de v3-backtest (breakouts) is dan pas eerlijk te beoordelen
+    if HAVE_STRATEGY:
+        try:
+            daily = fetch_candles("BTC-EUR", "1d", limit=91)
+            if len(daily) >= 30 and \
+               daily[-1].close >= max(c.close for c in daily[:-1]):
+                health += (
+                    '<div class="card" style="border-color:var(--up);'
+                    'margin-bottom:16px"><b style="color:var(--up)">'
+                    '📈 BTC sloot op een 90-dagen-high</b> — de markt trendt. '
+                    'Dit is het afgesproken moment om v3 (breakouts) opnieuw '
+                    'te beoordelen: <code>python3 backtest.py --interval 1h '
+                    '--days 120 --maker</code></div>')
+        except Exception:
+            pass                       # geen koersdata → geen hint, geen crash
 
     now = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
     return f"""<!doctype html>
