@@ -298,3 +298,25 @@ python3 backtest.py --interval 1h --days 120 --only v3   # alleen v3
 Beoordeel v3 op: PF > 1.3, avgW/avgL-verhouding ruim boven 1.5 (de winst
 zit in de staart), avgL rond −0.7R, maxDD < 10%, ≥ 30 trades. Pas als
 dat op écht data staat, bouwen we hem in de paper-trader.
+
+## Status na de échte backtests (14 juli 2026) — lees dit eerst
+
+Alle drie de strategieën zijn op échte Bitvavo-data gefalsifieerd of
+bevestigd (120d 1h + 240d 4h, incl. fees en gemeten slippage):
+
+| Strategie | Thesis | Resultaat | Oordeel |
+|---|---|---|---|
+| v1 (dips, 15m) | koop elke RSI-dip | PF 0.47–0.70, −15 à −31% in élke run | **verliest structureel** |
+| v2 (dips + gates) | koop alléén perfecte, betaalbare dips | 2–4 trades, ~break-even tot +2%, maxDD ≤ 1% | **beschermt kapitaal, verdient (nog) niets** |
+| v3 (breakouts) | koop sterkte, trail de stop | payoff-asymmetrie klopt (avgW +1.4R / avgL −0.8R) maar winrate 15–28% ≪ break-even | **gefalsifieerd in deze periode** |
+
+Conclusie: in deze 120 dagen bestond er op deze markten géén oogstbare
+long-edge na kosten — ook niet op alleen BTC/ETH/SOL. Het probleem is
+niet de entry-logica maar het marktregime (chop/daling: v1 als
+thermometer verloor overal).
+
+Afgesproken einde: **geen verdere parameter-iteratie op dezelfde data**
+(dat is jezelf voor de gek houden). v2 blijft in paper-modus draaien
+(dashboard + pushmeldingen bewaken hem). Draai de backtests opnieuw
+zodra BTC een duidelijke uptrend heeft (bv. nieuwe 90-dagen-high) —
+pas in een trendende markt is v3 eerlijk te beoordelen.
